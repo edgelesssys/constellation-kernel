@@ -171,18 +171,19 @@ Summary: The Linux kernel
 #  the --with-release option overrides this setting.)
 %define debugbuildsenabled 1
 # define buildid .local
-%define specrpmversion 6.4.8
-%define specversion 6.4.8
-%define patchversion 6.4
-%define pkgrelease 200
+%define buildid .constellation
+%define specrpmversion 6.1.43
+%define specversion 6.1.43
+%define patchversion 6.1
+%define pkgrelease 100
 %define kversion 6
-%define tarfile_release 6.4.8
+%define tarfile_release 6.1.43
 # This is needed to do merge window version magic
-%define patchlevel 4
+%define patchlevel 1
 # This allows pkg_release to have configurable %%{?dist} tag
-%define specrelease 200%{?buildid}%{?dist}
+%define specrelease 100%{?buildid}%{?dist}
 # This defines the kabi tarball version
-%define kabiversion 6.4.8
+%define kabiversion 6.1.43
 
 # If this variable is set to 1, a bpf selftests build failure will cause a
 # fatal kernel package build error
@@ -846,7 +847,7 @@ BuildRequires: tpm2-tools
 # exact git commit you can run
 #
 # xzcat -qq ${TARBALL} | git get-tar-commit-id
-Source0: linux-%{tarfile_release}.tar.xz
+Source0: https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.1.43.tar.xz
 
 Source1: Makefile.rhelver
 
@@ -1025,6 +1026,8 @@ Source4002: gating.yaml
 %if !%{nopatches}
 
 Patch1: patch-%{patchversion}-redhat.patch
+
+Patch2: pat_without_mtrr.patch
 %endif
 
 # empty final patch to facilitate testing of kernel patches
@@ -1763,6 +1766,8 @@ cp -a %{SOURCE1} .
 
 ApplyOptionalPatch patch-%{patchversion}-redhat.patch
 %endif
+
+ApplyOptionalPatch pat_without_mtrr.patch
 
 ApplyOptionalPatch linux-kernel-test.patch
 
