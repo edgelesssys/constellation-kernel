@@ -1017,7 +1017,7 @@ Source3001: kernel-local
 Source3002: Patchlist.changelog
 %endif
 
-Source4000: README.rst
+# Source4000: README.rst
 Source4001: rpminspect.yaml
 Source4002: gating.yaml
 
