@@ -1028,6 +1028,8 @@ Source4002: gating.yaml
 Patch1: patch-%{patchversion}-redhat.patch
 
 Patch2: pat_without_mtrr.patch
+
+Patch3: revert-ftpm-rng-disable.patch
 %endif
 
 # empty final patch to facilitate testing of kernel patches
@@ -1768,6 +1770,8 @@ ApplyOptionalPatch patch-%{patchversion}-redhat.patch
 %endif
 
 ApplyOptionalPatch pat_without_mtrr.patch
+
+ApplyOptionalPatch revert-ftpm-rng-disable.patch
 
 ApplyOptionalPatch linux-kernel-test.patch
 
