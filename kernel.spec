@@ -172,18 +172,18 @@ Summary: The Linux kernel
 %define debugbuildsenabled 1
 # define buildid .local
 %define buildid .constellation
-%define specrpmversion 6.1.62
-%define specversion 6.1.62
+%define specrpmversion 6.1.63
+%define specversion 6.1.63
 %define patchversion 6.1
 %define pkgrelease 100
 %define kversion 6
-%define tarfile_release 6.1.62
+%define tarfile_release 6.1.63
 # This is needed to do merge window version magic
 %define patchlevel 1
 # This allows pkg_release to have configurable %%{?dist} tag
 %define specrelease 100%{?buildid}%{?dist}
 # This defines the kabi tarball version
-%define kabiversion 6.1.62
+%define kabiversion 6.1.63
 
 # If this variable is set to 1, a bpf selftests build failure will cause a
 # fatal kernel package build error
@@ -847,7 +847,7 @@ BuildRequires: tpm2-tools
 # exact git commit you can run
 #
 # xzcat -qq ${TARBALL} | git get-tar-commit-id
-Source0: https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.1.62.tar.xz
+Source0: https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.1.63.tar.xz
 
 Source1: Makefile.rhelver
 
