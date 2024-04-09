@@ -1,0 +1,71 @@
+From 64a4341907977742f5967581ef59e5bccc33273a Mon Sep 17 00:00:00 2001
+From: Michael Kelley <mikelley@microsoft.com>
+Date: Wed, 8 Mar 2023 18:40:06 -0800
+Subject: init: Call mem_encrypt_init() after Hyper-V hypercall init is done
+
+BugLink: https://bugs.launchpad.net/bugs/2015369
+
+Full Hyper-V initialization, including support for hypercalls, is done
+as an apic_post_init callback via late_time_init().  mem_encrypt_init()
+needs to make hypercalls when it marks swiotlb memory as decrypted.
+But mem_encrypt_init() is currently called a few lines before
+late_time_init(), so the hypercalls don't work.
+
+Fix this by moving mem_encrypt_init() after late_time_init() and
+related clock initializations. The intervening initializations don't
+do any I/O that requires the swiotlb, so moving mem_encrypt_init()
+slightly later has no impact.
+
+Signed-off-by: Michael Kelley <mikelley@microsoft.com>
+Signed-off-by: Borislav Petkov (AMD) <bp@alien8.de>
+Reviewed-by: Tom Lendacky <thomas.lendacky@amd.com>
+Link: https://lore.kernel.org/r/1678329614-3482-6-git-send-email-mikelley@microsoft.com
+(cherry picked from commit e45e761b77bc0739e7e23258c4394013bbb919c7)
+Signed-off-by: Tim Gardner <tim.gardner@canonical.com>
+Acked-by: Philip Cox <philip.cox@canonical.com>
+Acked-by: Cengiz Can <cengiz.can@canonical.com>
+Signed-off-by: Tim Gardner <tim.gardner@canonical.com>
+---
+ init/main.c | 19 +++++++++++--------
+ 1 file changed, 11 insertions(+), 8 deletions(-)
+
+diff --git a/init/main.c b/init/main.c
+index e1c3911d7c70..5a7c46603443 100644
+--- a/init/main.c
++++ b/init/main.c
+@@ -1088,14 +1088,6 @@ asmlinkage __visible void __init __no_sanitize_address start_kernel(void)
+ 	 */
+ 	locking_selftest();
+ 
+-	/*
+-	 * This needs to be called before any devices perform DMA
+-	 * operations that might use the SWIOTLB bounce buffers. It will
+-	 * mark the bounce buffers as decrypted so that their usage will
+-	 * not cause "plain-text" data to be decrypted when accessed.
+-	 */
+-	mem_encrypt_init();
+-
+ #ifdef CONFIG_BLK_DEV_INITRD
+ 	if (initrd_start && !initrd_below_start_ok &&
+ 	    page_to_pfn(virt_to_page((void *)initrd_start)) < min_low_pfn) {
+@@ -1112,6 +1104,17 @@ asmlinkage __visible void __init __no_sanitize_address start_kernel(void)
+ 		late_time_init();
+ 	sched_clock_init();
+ 	calibrate_delay();
++
++	/*
++	 * This needs to be called before any devices perform DMA
++	 * operations that might use the SWIOTLB bounce buffers. It will
++	 * mark the bounce buffers as decrypted so that their usage will
++	 * not cause "plain-text" data to be decrypted when accessed. It
++	 * must be called after late_time_init() so that Hyper-V x86/x64
++	 * hypercalls work when the SWIOTLB bounce buffers are decrypted.
++	 */
++	mem_encrypt_init();
++
+ 	pid_idr_init();
+ 	anon_vma_init();
+ #ifdef CONFIG_X86
+-- 
+cgit v1.2.3
+

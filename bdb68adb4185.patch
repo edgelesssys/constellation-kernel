@@ -1,0 +1,44 @@
+From bdb68adb41852ef422a74bafe7238d7e2995f7a3 Mon Sep 17 00:00:00 2001
+From: Dexuan Cui <decui@microsoft.com>
+Date: Fri, 5 May 2023 01:48:24 +0000
+Subject: UBUNTU: SAUCE: Drivers: hv: vmbus: Revert Dexuan's changes to
+ hv_ringbuffer_init()
+
+BugLink: https://bugs.launchpad.net/bugs/2015369
+
+Dexuan's earlier TDX patchset changed hv_ringbuffer_init() in
+57c7e7efde03 ("UBUNTU: SAUCE: tdx: Drivers: hv: vmbus: Support TDX guests")
+dcc39e05e743 ("UBUNTU: SAUCE: tdx: Drivers: hv: vmbus:: Fix the ARM64 build caused by recent TDX patches")
+
+Revert the changes so that Michael Kelley's  mainline commit
+bb862397f48f ("Drivers: hv: vmbus: Remove second way of mapping ring buffers")
+can be cherry-picked cleanly.
+
+Signed-off-by: Dexuan Cui <decui@microsoft.com>
+Signed-off-by: Tim Gardner <tim.gardner@canonical.com>
+Acked-by: Philip Cox <philip.cox@canonical.com>
+Acked-by: Cengiz Can <cengiz.can@canonical.com>
+Signed-off-by: Tim Gardner <tim.gardner@canonical.com>
+---
+ drivers/hv/ring_buffer.c | 4 ----
+ 1 file changed, 4 deletions(-)
+
+diff --git a/drivers/hv/ring_buffer.c b/drivers/hv/ring_buffer.c
+index 04143770811e..2111e97c3b63 100644
+--- a/drivers/hv/ring_buffer.c
++++ b/drivers/hv/ring_buffer.c
+@@ -233,11 +233,7 @@ int hv_ringbuffer_init(struct hv_ring_buffer_info *ring_info,
+ 
+ 		ring_info->ring_buffer = (struct hv_ring_buffer *)
+ 			vmap(pages_wraparound, page_cnt * 2 - 1, VM_MAP,
+-#ifdef CONFIG_X86
+-				pgprot_decrypted(PAGE_KERNEL_NOENC));
+-#else
+ 				PAGE_KERNEL);
+-#endif
+ 
+ 		kfree(pages_wraparound);
+ 		if (!ring_info->ring_buffer)
+-- 
+cgit v1.2.3
+

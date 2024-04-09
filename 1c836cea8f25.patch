@@ -1,0 +1,132 @@
+From 1c836cea8f25c1e0cbbaaa26e300ac87e856f809 Mon Sep 17 00:00:00 2001
+From: Dexuan Cui <decui@microsoft.com>
+Date: Sat, 8 Apr 2023 14:34:41 -0700
+Subject: Drivers: hv: vmbus: Remove the per-CPU post_msg_page
+
+BugLink: https://bugs.launchpad.net/bugs/2015369
+
+The post_msg_page was introduced in 2014 in
+commit b29ef3546aec ("Drivers: hv: vmbus: Cleanup hv_post_message()")
+
+Commit 68bb7bfb7985 ("X86/Hyper-V: Enable IPI enlightenments") introduced
+the hyperv_pcpu_input_arg in 2018, which can be used in hv_post_message().
+
+Remove post_msg_page to simplify the code a little bit.
+
+Signed-off-by: Dexuan Cui <decui@microsoft.com>
+Reviewed-by: Jinank Jain <jinankjain@linux.microsoft.com>
+Link: https://lore.kernel.org/r/20230408213441.15472-1-decui@microsoft.com
+Signed-off-by: Wei Liu <wei.liu@kernel.org>
+(backported from commit 9a6b1a170ca8627d401fa76112e4920ba8c6314c)
+[rtg - context adjustment]
+Signed-off-by: Dexuan Cui <decui@microsoft.com>
+Signed-off-by: Tim Gardner <tim.gardner@canonical.com>
+Acked-by: Philip Cox <philip.cox@canonical.com>
+Acked-by: Cengiz Can <cengiz.can@canonical.com>
+Signed-off-by: Tim Gardner <tim.gardner@canonical.com>
+---
+ drivers/hv/hv.c           | 35 +++++------------------------------
+ drivers/hv/hyperv_vmbus.h |  4 ----
+ 2 files changed, 5 insertions(+), 34 deletions(-)
+
+diff --git a/drivers/hv/hv.c b/drivers/hv/hv.c
+index 1822eece205d..a6ecf742534f 100644
+--- a/drivers/hv/hv.c
++++ b/drivers/hv/hv.c
+@@ -85,14 +85,15 @@ int hv_post_message(union hv_connection_id connection_id,
+ 		  void *payload, size_t payload_size)
+ {
+ 	struct hv_input_post_message *aligned_msg;
+-	struct hv_per_cpu_context *hv_cpu;
++	unsigned long flags;
+ 	u64 status;
+ 
+ 	if (payload_size > HV_MESSAGE_PAYLOAD_BYTE_COUNT)
+ 		return -EMSGSIZE;
+ 
+-	hv_cpu = get_cpu_ptr(hv_context.cpu_context);
+-	aligned_msg = hv_cpu->post_msg_page;
++	local_irq_save(flags);
++
++	aligned_msg = *this_cpu_ptr(hyperv_pcpu_input_arg);
+ 	aligned_msg->connectionid = connection_id;
+ 	aligned_msg->reserved = 0;
+ 	aligned_msg->message_type = message_type;
+@@ -107,11 +108,7 @@ int hv_post_message(union hv_connection_id connection_id,
+ 		status = hv_do_hypercall(HVCALL_POST_MESSAGE,
+ 				aligned_msg, NULL);
+ 
+-	/* Preemption must remain disabled until after the hypercall
+-	 * so some other thread can't get scheduled onto this cpu and
+-	 * corrupt the per-cpu post_msg_page
+-	 */
+-	put_cpu_ptr(hv_cpu);
++	local_irq_restore(flags);
+ 
+ 	return hv_result(status);
+ }
+@@ -165,13 +162,6 @@ int hv_synic_alloc(void)
+ 			}
+ 		}
+ 
+-		hv_cpu->post_msg_page = (void *)get_zeroed_page(GFP_ATOMIC);
+-		if (hv_cpu->post_msg_page == NULL) {
+-			pr_err("Unable to allocate post msg page\n");
+-			goto err;
+-		}
+-
+-
+ 		if (hv_isolation_type_tdx()) {
+ 			ret = set_memory_decrypted(
+ 				(unsigned long)hv_cpu->synic_message_page, 1);
+@@ -186,13 +176,6 @@ int hv_synic_alloc(void)
+ 				pr_err("Failed to decrypt SYNIC event page\n");
+ 				goto err;
+ 			}
+-
+-			ret = set_memory_decrypted(
+-				(unsigned long)hv_cpu->post_msg_page, 1);
+-			if (ret) {
+-				pr_err("Failed to decrypt post msg page\n");
+-				goto err;
+-			}
+ 		}
+ 	}
+ 
+@@ -229,18 +212,10 @@ void hv_synic_free(void)
+ 				pr_err("Failed to encrypt SYNIC event page\n");
+ 				continue;
+ 			}
+-
+-			ret = set_memory_encrypted(
+-				(unsigned long)hv_cpu->post_msg_page, 1);
+-			if (ret) {
+-				pr_err("Failed to encrypt post msg page\n");
+-				continue;
+-			}
+ 		}
+ 
+ 		free_page((unsigned long)hv_cpu->synic_event_page);
+ 		free_page((unsigned long)hv_cpu->synic_message_page);
+-		free_page((unsigned long)hv_cpu->post_msg_page);
+ 	}
+ 
+ 	kfree(hv_context.hv_numa_map);
+diff --git a/drivers/hv/hyperv_vmbus.h b/drivers/hv/hyperv_vmbus.h
+index 167ac5115a78..55f2086841ae 100644
+--- a/drivers/hv/hyperv_vmbus.h
++++ b/drivers/hv/hyperv_vmbus.h
+@@ -122,10 +122,6 @@ enum {
+ struct hv_per_cpu_context {
+ 	void *synic_message_page;
+ 	void *synic_event_page;
+-	/*
+-	 * buffer to post messages to the host.
+-	 */
+-	void *post_msg_page;
+ 
+ 	/*
+ 	 * Starting with win8, we can take channel interrupts on any CPU;
+-- 
+cgit v1.2.3
+

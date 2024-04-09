@@ -1028,6 +1028,33 @@ Source4002: gating.yaml
 Patch1: patch-%{patchversion}-redhat.patch
 
 Patch2: pat_without_mtrr.patch
+
+# PCI: hv: Enable PCI pass-thru devices in Confidential VMs
+Patch3: bf2d77355c5d.patch
+# Patch4: 3c0807e00ccd.patch
+Patch5: d2d2a2cd15dd.patch
+Patch6: eeb18929996e.patch
+Patch7: 64a434190797.patch
+Patch8: 964c9fea9fb4.patch
+Patch9: 5d336ab29c19.patch
+Patch10: 1b30cf73cce0.patch
+Patch11: bdb68adb4185.patch
+Patch12: 9d7b0db2be25.patch
+Patch13: 527ccf0bd49d.patch
+Patch14: a1bbe8e5f528.patch
+Patch15: b715efa3b0e0.patch
+Patch16: b30ced7f88f3.patch
+Patch17: 2dc6c43d896c.patch
+Patch18: 221fa12111fd.patch
+Patch19: 24318e252b23.patch
+Patch20: 19402d7826bb.patch
+Patch21: d135c05c3769.patch
+Patch22: f393af6ce406.patch
+Patch23: 1c836cea8f25.patch
+Patch24: 00719c07f467.patch
+Patch25: 8397fc3de935.patch
+Patch26: 8dff26f38671.patch
+
 %endif
 
 # empty final patch to facilitate testing of kernel patches
@@ -1768,6 +1795,31 @@ ApplyOptionalPatch patch-%{patchversion}-redhat.patch
 %endif
 
 ApplyOptionalPatch pat_without_mtrr.patch
+
+ApplyOptionalPatch bf2d77355c5d.patch
+# ApplyOptionalPatch 3c0807e00ccd.patch
+ApplyOptionalPatch d2d2a2cd15dd.patch
+ApplyOptionalPatch eeb18929996e.patch
+ApplyOptionalPatch 64a434190797.patch
+ApplyOptionalPatch 964c9fea9fb4.patch
+ApplyOptionalPatch 5d336ab29c19.patch
+ApplyOptionalPatch 1b30cf73cce0.patch
+ApplyOptionalPatch bdb68adb4185.patch
+ApplyOptionalPatch 9d7b0db2be25.patch
+ApplyOptionalPatch 527ccf0bd49d.patch
+ApplyOptionalPatch a1bbe8e5f528.patch
+ApplyOptionalPatch b715efa3b0e0.patch
+ApplyOptionalPatch b30ced7f88f3.patch
+ApplyOptionalPatch 2dc6c43d896c.patch
+ApplyOptionalPatch 221fa12111fd.patch
+ApplyOptionalPatch 24318e252b23.patch
+ApplyOptionalPatch 19402d7826bb.patch
+ApplyOptionalPatch d135c05c3769.patch
+ApplyOptionalPatch f393af6ce406.patch
+ApplyOptionalPatch 1c836cea8f25.patch
+ApplyOptionalPatch 00719c07f467.patch
+ApplyOptionalPatch 8397fc3de935.patch
+ApplyOptionalPatch 8dff26f38671.patch
 
 ApplyOptionalPatch linux-kernel-test.patch
 

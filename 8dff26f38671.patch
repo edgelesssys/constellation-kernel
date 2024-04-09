@@ -1,0 +1,38 @@
+From 8dff26f38671a6b0834f370711af93afd9fbda91 Mon Sep 17 00:00:00 2001
+From: Michael Kelley <mikelley@microsoft.com>
+Date: Tue, 23 May 2023 09:38:27 -0700
+Subject: arm64/hyperv: Use CPUHP_AP_HYPERV_ONLINE state to fix CPU online
+ sequencing
+
+BugLink: https://bugs.launchpad.net/bugs/2015369
+
+State CPUHP_AP_HYPERV_ONLINE has been introduced to correctly sequence the
+initialization of hyperv_pcpu_input_arg. Use this new state for Hyper-V
+initialization so that hyperv_pcpu_input_arg is allocated early enough.
+
+Signed-off-by: Michael Kelley <mikelley@microsoft.com>
+(cherry picked from commit 2cd655fda96ea765db6b4145f7828280a0cfa2a1 https://github.com/kelleymh/linux.git)
+Signed-off-by: Tim Gardner <tim.gardner@canonical.com>
+Acked-by: Philip Cox <philip.cox@canonical.com>
+Acked-by: Cengiz Can <cengiz.can@canonical.com>
+Signed-off-by: Tim Gardner <tim.gardner@canonical.com>
+---
+ arch/arm64/hyperv/mshyperv.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/arm64/hyperv/mshyperv.c b/arch/arm64/hyperv/mshyperv.c
+index a406454578f0..f1b8a04ee9f2 100644
+--- a/arch/arm64/hyperv/mshyperv.c
++++ b/arch/arm64/hyperv/mshyperv.c
+@@ -67,7 +67,7 @@ static int __init hyperv_init(void)
+ 	if (ret)
+ 		return ret;
+ 
+-	ret = cpuhp_setup_state(CPUHP_AP_ONLINE_DYN, "arm64/hyperv_init:online",
++	ret = cpuhp_setup_state(CPUHP_AP_HYPERV_ONLINE, "arm64/hyperv_init:online",
+ 				hv_common_cpu_init, hv_common_cpu_die);
+ 	if (ret < 0) {
+ 		hv_common_free();
+-- 
+cgit v1.2.3
+

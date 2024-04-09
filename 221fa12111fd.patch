@@ -1,0 +1,40 @@
+From 221fa12111fd6a117dc91840ba34aed4a0595922 Mon Sep 17 00:00:00 2001
+From: Jinank Jain <jinankjain@linux.microsoft.com>
+Date: Mon, 2 Jan 2023 07:12:54 +0000
+Subject: Drivers: hv: Enable vmbus driver for nested root partition
+
+BugLink: https://bugs.launchpad.net/bugs/2015369
+
+Currently VMBus driver is not initialized for root partition but we need
+to enable the VMBus driver for nested root partition. This is required,
+so that L2 root can use the VMBus devices.
+
+Signed-off-by: Jinank Jain <jinankjain@linux.microsoft.com>
+Reviewed-by: Michael Kelley <mikelley@microsoft.com>
+Link: https://lore.kernel.org/r/c3cdd2cf2bffeba388688640eb61bc182e4c041d.1672639707.git.jinankjain@linux.microsoft.com
+Signed-off-by: Wei Liu <wei.liu@kernel.org>
+(cherry picked from commit 8536290f0011c582df08657825cf2fee65aac9ed)
+Signed-off-by: Tim Gardner <tim.gardner@canonical.com>
+Acked-by: Philip Cox <philip.cox@canonical.com>
+Acked-by: Cengiz Can <cengiz.can@canonical.com>
+Signed-off-by: Tim Gardner <tim.gardner@canonical.com>
+---
+ drivers/hv/vmbus_drv.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/hv/vmbus_drv.c b/drivers/hv/vmbus_drv.c
+index bb33e31bcc24..23b8fafa1fc9 100644
+--- a/drivers/hv/vmbus_drv.c
++++ b/drivers/hv/vmbus_drv.c
+@@ -2758,7 +2758,7 @@ static int __init hv_acpi_init(void)
+ 	if (!hv_is_hyperv_initialized())
+ 		return -ENODEV;
+ 
+-	if (hv_root_partition)
++	if (hv_root_partition && !hv_nested)
+ 		return 0;
+ 
+ 	/*
+-- 
+cgit v1.2.3
+

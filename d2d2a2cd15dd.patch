@@ -1,0 +1,58 @@
+From d2d2a2cd15ddfb5eaf5abaae3edd10a29d071b9b Mon Sep 17 00:00:00 2001
+From: Michael Kelley <mikelley@microsoft.com>
+Date: Sun, 26 Mar 2023 06:51:58 -0700
+Subject: Drivers: hv: Explicitly request decrypted in vmap_pfn() calls
+
+BugLink: https://bugs.launchpad.net/bugs/2015369
+
+Update vmap_pfn() calls to explicitly request that the mapping
+be for decrypted access to the memory.  There's no change in
+functionality since the PFNs passed to vmap_pfn() are above the
+shared_gpa_boundary, implicitly producing a decrypted mapping.
+But explicitly requesting "decrypted" allows the code to work
+before and after changes that cause vmap_pfn() to mask the
+PFNs to being below the shared_gpa_boundary.
+
+Signed-off-by: Michael Kelley <mikelley@microsoft.com>
+Signed-off-by: Borislav Petkov (AMD) <bp@alien8.de>
+Reviewed-by: Tianyu Lan <Tianyu.Lan@microsoft.com>
+Link: https://lore.kernel.org/r/1679838727-87310-4-git-send-email-mikelley@microsoft.com
+(cherry picked from commit d33ddc92db8a61416473ff3d7f1c621c50733dc0)
+Signed-off-by: Tim Gardner <tim.gardner@canonical.com>
+Acked-by: Philip Cox <philip.cox@canonical.com>
+Acked-by: Cengiz Can <cengiz.can@canonical.com>
+Signed-off-by: Tim Gardner <tim.gardner@canonical.com>
+---
+ arch/x86/hyperv/ivm.c    | 2 +-
+ drivers/hv/ring_buffer.c | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/arch/x86/hyperv/ivm.c b/arch/x86/hyperv/ivm.c
+index 85ec7d640a13..5e11fd8d8479 100644
+--- a/arch/x86/hyperv/ivm.c
++++ b/arch/x86/hyperv/ivm.c
+@@ -366,7 +366,7 @@ void *hv_map_memory(void *addr, unsigned long size)
+ 		pfns[i] = vmalloc_to_pfn(addr + i * PAGE_SIZE) +
+ 			(ms_hyperv.shared_gpa_boundary >> PAGE_SHIFT);
+ 
+-	vaddr = vmap_pfn(pfns, size / PAGE_SIZE, PAGE_KERNEL_IO);
++	vaddr = vmap_pfn(pfns, size / PAGE_SIZE, pgprot_decrypted(PAGE_KERNEL));
+ 	kfree(pfns);
+ 
+ 	return vaddr;
+diff --git a/drivers/hv/ring_buffer.c b/drivers/hv/ring_buffer.c
+index b60d5fb5e7e6..04143770811e 100644
+--- a/drivers/hv/ring_buffer.c
++++ b/drivers/hv/ring_buffer.c
+@@ -211,7 +211,7 @@ int hv_ringbuffer_init(struct hv_ring_buffer_info *ring_info,
+ 
+ 		ring_info->ring_buffer = (struct hv_ring_buffer *)
+ 			vmap_pfn(pfns_wraparound, page_cnt * 2 - 1,
+-				 PAGE_KERNEL);
++				 pgprot_decrypted(PAGE_KERNEL));
+ 		kfree(pfns_wraparound);
+ 
+ 		if (!ring_info->ring_buffer)
+-- 
+cgit v1.2.3
+

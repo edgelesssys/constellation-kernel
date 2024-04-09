@@ -1,0 +1,64 @@
+From d135c05c3769f74cbf4e7e6332edd9c394d48a03 Mon Sep 17 00:00:00 2001
+From: Dexuan Cui <decui@microsoft.com>
+Date: Sat, 8 Apr 2023 18:42:09 +0000
+Subject: UBUNTU: SAUCE: Drivers: hv: vmbus: Hardcode MMIO resources in
+ vmbus_walk_resources() when necessary
+
+BugLink: https://bugs.launchpad.net/bugs/2015369
+
+Currently Hyper-V has not provided valid MMIO resources for TDX VMs (without pavavisor).
+Hardcode the resources as a temporary workaround.
+
+This patch is tested on a local Hyper-V host for TDX VMs.
+
+These hardcoded MMIO ranges are the same default values for a regular non-CVM VM
+on a local Hyper-V host. On Azure, the default ranges are:
+[c0000000, ffffffff] and [fe0000000, fffffffff]. These hardcoded MMIO ranges here
+should also work when a TDX VM runs on Azure, though the patch uses a smaller 32-bit
+MMIO range that's a subset of [c0000000, ffffffff].
+
+The patch should not cause any regression for non-TDX VMs because the 'start' in
+those VMs should be non-zero, so it should be safe to include this patch in an
+official kernel.
+
+Signed-off-by: Dexuan Cui <decui@microsoft.com>
+(cherry picked from commit 41bc034ec095b46e13c59749736550aff451d011 https://github.com/dcui/tdx/commit/41bc034ec095b46e13c59749736550aff451d011)
+Signed-off-by: Dexuan Cui <decui@microsoft.com>
+Signed-off-by: Tim Gardner <tim.gardner@canonical.com>
+Acked-by: Philip Cox <philip.cox@canonical.com>
+Acked-by: Cengiz Can <cengiz.can@canonical.com>
+Signed-off-by: Tim Gardner <tim.gardner@canonical.com>
+---
+ drivers/hv/vmbus_drv.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/drivers/hv/vmbus_drv.c b/drivers/hv/vmbus_drv.c
+index 23b8fafa1fc9..9be8244d1d92 100644
+--- a/drivers/hv/vmbus_drv.c
++++ b/drivers/hv/vmbus_drv.c
+@@ -2190,11 +2190,22 @@ static acpi_status vmbus_walk_resources(struct acpi_resource *res, void *ctx)
+ 	case ACPI_RESOURCE_TYPE_ADDRESS32:
+ 		start = res->data.address32.address.minimum;
+ 		end = res->data.address32.address.maximum;
++		if (start == 0 && end == 0xFFFFFFFF) {
++			start = 0xF8000000;
++			end = 0xFFFFFFFF;
++			pr_warn("vmbus_walk_resources: using a default 32-bit MMIO range\n");
++		}
+ 		break;
+ 
+ 	case ACPI_RESOURCE_TYPE_ADDRESS64:
+ 		start = res->data.address64.address.minimum;
+ 		end = res->data.address64.address.maximum;
++
++		if (start == 0 && end == 0xFFFFFFFFFFFFFFFF) {
++			start = 0xFE0000000;
++			end = 0xFFFFFFFFF;
++			pr_warn("vmbus_walk_resources: using a default 64-bit MMIO range\n");
++		}
+ 		break;
+ 
+ 	/*
+-- 
+cgit v1.2.3
+

@@ -1,0 +1,85 @@
+From f393af6ce4060bf400680d8e9711acf3db4766f6 Mon Sep 17 00:00:00 2001
+From: Dexuan Cui <decui@microsoft.com>
+Date: Fri, 5 May 2023 04:27:27 +0000
+Subject: UBUNTU: SAUCE: x86/hyperv: Support hypercalls for TDX guests (part 2)
+
+BugLink: https://bugs.launchpad.net/bugs/2015369
+
+Add the missing patch from
+https://github.com/dcui/tdx/commit/1c59d1571537c077052140d61589c8851b3e4fd2
+
+Signed-off-by: Dexuan Cui <decui@microsoft.com>
+Signed-off-by: Tim Gardner <tim.gardner@canonical.com>
+Acked-by: Philip Cox <philip.cox@canonical.com>
+Acked-by: Cengiz Can <cengiz.can@canonical.com>
+Signed-off-by: Tim Gardner <tim.gardner@canonical.com>
+---
+ drivers/hv/hv_common.c | 24 ++++++++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/drivers/hv/hv_common.c b/drivers/hv/hv_common.c
+index 8c81cea6687d..6a4f2ca65561 100644
+--- a/drivers/hv/hv_common.c
++++ b/drivers/hv/hv_common.c
+@@ -21,6 +21,7 @@
+ #include <linux/ptrace.h>
+ #include <linux/slab.h>
+ #include <linux/dma-map-ops.h>
++#include <linux/set_memory.h>
+ #include <asm/hyperv-tlfs.h>
+ #include <asm/mshyperv.h>
+ 
+@@ -128,6 +129,7 @@ int hv_common_cpu_init(unsigned int cpu)
+ 	u64 msr_vp_index;
+ 	gfp_t flags;
+ 	int pgcount = hv_root_partition ? 2 : 1;
++	int ret;
+ 
+ 	/* hv_cpu_init() can be called with IRQs disabled from hv_resume() */
+ 	flags = irqs_disabled() ? GFP_ATOMIC : GFP_KERNEL;
+@@ -137,6 +139,17 @@ int hv_common_cpu_init(unsigned int cpu)
+ 	if (!(*inputarg))
+ 		return -ENOMEM;
+ 
++	if (hv_isolation_type_tdx()) {
++		ret = set_memory_decrypted((unsigned long)*inputarg, pgcount);
++		if (ret) {
++			/* It may be unsafe to free *inputarg */
++			*inputarg = NULL;
++			return ret;
++		}
++
++		memset(*inputarg, 0x00, pgcount * HV_HYP_PAGE_SIZE);
++	}
++
+ 	if (hv_root_partition) {
+ 		outputarg = (void **)this_cpu_ptr(hyperv_pcpu_output_arg);
+ 		*outputarg = (char *)(*inputarg) + HV_HYP_PAGE_SIZE;
+@@ -157,6 +170,8 @@ int hv_common_cpu_die(unsigned int cpu)
+ 	unsigned long flags;
+ 	void **inputarg, **outputarg;
+ 	void *mem;
++	int pgcount = hv_root_partition ? 2 : 1;
++	int ret;
+ 
+ 	local_irq_save(flags);
+ 
+@@ -171,6 +186,15 @@ int hv_common_cpu_die(unsigned int cpu)
+ 
+ 	local_irq_restore(flags);
+ 
++	if (hv_isolation_type_tdx()) {
++		ret = set_memory_encrypted((unsigned long)mem, pgcount);
++		if (ret)
++			pr_warn("Hyper-V: Failed to encrypt input arg on cpu%d: %d\n",
++				cpu, ret);
++		/* It's unsafe to free 'mem'. */
++		return 0;
++	}
++
+ 	kfree(mem);
+ 
+ 	return 0;
+-- 
+cgit v1.2.3
+
