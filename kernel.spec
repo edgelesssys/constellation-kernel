@@ -172,18 +172,18 @@ Summary: The Linux kernel
 %define debugbuildsenabled 1
 # define buildid .local
 %define buildid .constellation
-%define specrpmversion 6.1.79
-%define specversion 6.1.79
-%define patchversion 6.1
+%define specrpmversion 6.2.0
+%define specversion 6.2.0
+%define patchversion 6.2
 %define pkgrelease 100
 %define kversion 6
-%define tarfile_release 6.1.79
+%define tarfile_release 6.2.0
 # This is needed to do merge window version magic
 %define patchlevel 1
 # This allows pkg_release to have configurable %%{?dist} tag
 %define specrelease 100%{?buildid}%{?dist}
 # This defines the kabi tarball version
-%define kabiversion 6.1.79
+%define kabiversion 6.2.0
 
 # If this variable is set to 1, a bpf selftests build failure will cause a
 # fatal kernel package build error
@@ -847,7 +847,7 @@ BuildRequires: tpm2-tools
 # exact git commit you can run
 #
 # xzcat -qq ${TARBALL} | git get-tar-commit-id
-Source0: https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.1.79.tar.xz
+Source0: https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/linux-azure-6.2/6.2.0-1019.19~22.04.1/linux-azure-6.2_6.2.0.orig.tar.gz
 
 Source1: Makefile.rhelver
 
@@ -1757,7 +1757,7 @@ ApplyOptionalPatch()
 }
 
 %setup -q -n kernel-%{tarfile_release} -c
-mv linux-%{tarfile_release} linux-%{KVERREL}
+mv linux-6.2 linux-%{KVERREL}
 
 cd linux-%{KVERREL}
 cp -a %{SOURCE1} .
