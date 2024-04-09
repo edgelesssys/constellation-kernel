@@ -1034,7 +1034,7 @@ Patch3: bf2d77355c5d.patch
 # Patch4: 3c0807e00ccd.patch
 Patch5: d2d2a2cd15dd.patch
 Patch6: eeb18929996e.patch
-Patch7: 64a434190797.patch
+# Patch7: 64a434190797.patch
 Patch8: 964c9fea9fb4.patch
 Patch9: 5d336ab29c19.patch
 Patch10: 1b30cf73cce0.patch
@@ -1800,7 +1800,7 @@ ApplyOptionalPatch bf2d77355c5d.patch
 # ApplyOptionalPatch 3c0807e00ccd.patch
 ApplyOptionalPatch d2d2a2cd15dd.patch
 ApplyOptionalPatch eeb18929996e.patch
-ApplyOptionalPatch 64a434190797.patch
+# ApplyOptionalPatch 64a434190797.patch
 ApplyOptionalPatch 964c9fea9fb4.patch
 ApplyOptionalPatch 5d336ab29c19.patch
 ApplyOptionalPatch 1b30cf73cce0.patch

@@ -194,7 +194,7 @@ index 8e023bbb6971..dcea77148d3e 100644
  
  int hyperv_init_cpuhp;
  u64 hv_current_partition_id = ~0ull;
-@@ -522,19 +521,6 @@ skip_hypercall_pg_init:
+@@ -540,16 +540,6 @@ void __init hyperv_init(void)
  	/* Query the VMs extended capability once, so that it can be cached. */
  	hv_query_ext_cap(0);
  
@@ -203,11 +203,8 @@ index 8e023bbb6971..dcea77148d3e 100644
 -	 * Swiotlb bounce buffer needs to be mapped in extra address
 -	 * space. Map function doesn't work in the early place and so
 -	 * call swiotlb_update_mem_attributes() here.
--	 *
--	 *  Refer to mem_encrypt_init(), which runs before hyperv_init().
 -	 */
--	if (hv_is_isolation_supported() &&
--	    !cc_platform_has(CC_ATTR_MEM_ENCRYPT))
+-	if (hv_is_isolation_supported())
 -		swiotlb_update_mem_attributes();
 -#endif
 -
@@ -233,8 +230,8 @@ index 5e11fd8d8479..fb27282fe424 100644
  EXPORT_SYMBOL_GPL(hv_ghcb_msr_read);
 -#endif
  
- #ifdef CONFIG_INTEL_TDX_GUEST
- DEFINE_STATIC_KEY_FALSE(isolation_type_tdx);
+ enum hv_isolation_type hv_get_isolation_type(void)
+ {
 @@ -309,27 +310,25 @@ static int hv_mark_gpa_visibility(u16 count, const u64 pfn[],
  }
  
@@ -368,9 +365,8 @@ diff --git a/arch/x86/include/asm/mshyperv.h b/arch/x86/include/asm/mshyperv.h
 index 159ab74d80e6..14b497af40d3 100644
 --- a/arch/x86/include/asm/mshyperv.h
 +++ b/arch/x86/include/asm/mshyperv.h
-@@ -12,6 +12,14 @@
+@@ -12,5 +12,13 @@
  #include <asm/mshyperv.h>
- #include <asm/coco.h>
  
 +/*
 + * Hyper-V always provides a single IO-APIC at this MMIO address.
@@ -441,19 +437,18 @@ index fac8e8cf6896..f780137a09cf 100644
  
  		pr_info("Hyper-V: Isolation Config: Group A 0x%x, Group B 0x%x\n",
  			ms_hyperv.isolation_config_a, ms_hyperv.isolation_config_b);
-@@ -360,12 +361,6 @@ static void __init ms_hyperv_init_platform(void)
- #ifdef CONFIG_SWIOTLB
- 		swiotlb_set_alloc_from_low_pages(false);
+@@ -357,11 +357,6 @@ static void __init ms_hyperv_init_platform(void)
+ 			swiotlb_unencrypted_base = ms_hyperv.shared_gpa_boundary;
  #endif
+ 		}
 -		/* Isolation VMs are unenlightened SEV-based VMs, thus this check: */
 -		if (IS_ENABLED(CONFIG_AMD_MEM_ENCRYPT)) {
--			if (hv_get_isolation_type() == HV_ISOLATION_TYPE_VBS ||
--			    hv_get_isolation_type() == HV_ISOLATION_TYPE_SNP)
+-			if (hv_get_isolation_type() != HV_ISOLATION_TYPE_NONE)
 -				cc_set_vendor(CC_VENDOR_HYPERV);
 -		}
+ 	}
  
- 		if (IS_ENABLED(CONFIG_INTEL_TDX_GUEST) &&
- 		    hv_get_isolation_type() == HV_ISOLATION_TYPE_TDX) {
+ 	if (hv_max_functions_eax >= HYPERV_CPUID_NESTED_FEATURES) {
 @@ -455,6 +450,9 @@ static void __init ms_hyperv_init_platform(void)
  	i8253_clear_counter_on_shutdown = false;
  
@@ -472,7 +467,7 @@ index e069bf28d683..b037954e0f61 100644
  
  static int __set_memory_enc_dec(unsigned long addr, int numpages, bool enc)
  {
--	if (hv_set_memory_enc_dec_needed())
+-	if (hv_is_isolation_supported())
 -		return hv_set_mem_host_visibility(addr, numpages, !enc);
 -
  	if (cc_platform_has(CC_ATTR_MEM_ENCRYPT))
