@@ -1,0 +1,11 @@
+diff -Naur a/usr/include/Makefile b/usr/include/Makefile
+--- a/usr/include/Makefile	2024-04-09 22:27:28.901620794 +0200
++++ b/usr/include/Makefile	2024-04-09 22:29:04.039372223 +0200
+@@ -25,6 +25,7 @@
+ # Sorted alphabetically.
+ no-header-test += asm/ucontext.h
+ no-header-test += drm/vmwgfx_drm.h
++no-header-test += linux/apparmor.h
+ no-header-test += linux/am437x-vpfe.h
+ no-header-test += linux/coda.h
+ no-header-test += linux/cyclades.h
