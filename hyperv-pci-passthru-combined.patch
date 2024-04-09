@@ -1,0 +1,3413 @@
+From a4fea9b78ebea6df9a61f34cfc2f7ed0bbc8a9fc Mon Sep 17 00:00:00 2001
+From: Saurabh Sengar <ssengar@linux.microsoft.com>
+Date: Mon, 20 Mar 2023 00:47:36 -0700
+Subject: [PATCH 01/22] drivers/clocksource/hyper-v: non ACPI support in hyperv
+ clock
+
+Add a placeholder function for the hv_setup_stimer0_irq API to accommodate
+systems without ACPI support. Since this function is not utilized on
+x86/x64 systems and non-ACPI support is only intended for x86/x64 systems,
+a placeholder function is sufficient for now and can be improved upon if
+necessary in the future.
+
+Signed-off-by: Saurabh Sengar <ssengar@linux.microsoft.com>
+Reviewed-by: Michael Kelley <mikelley@microsoft.com>
+Link: https://lore.kernel.org/r/1679298460-11855-2-git-send-email-ssengar@linux.microsoft.com
+Signed-off-by: Wei Liu <wei.liu@kernel.org>
+---
+ drivers/clocksource/hyperv_timer.c | 15 +++++++++++++--
+ 1 file changed, 13 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/clocksource/hyperv_timer.c b/drivers/clocksource/hyperv_timer.c
+index c0cef92b12b82f..f32948c8a96fa3 100644
+--- a/drivers/clocksource/hyperv_timer.c
++++ b/drivers/clocksource/hyperv_timer.c
+@@ -49,7 +49,7 @@ static bool direct_mode_enabled;
+ 
+ static int stimer0_irq = -1;
+ static int stimer0_message_sint;
+-static DEFINE_PER_CPU(long, stimer0_evt);
++static __maybe_unused DEFINE_PER_CPU(long, stimer0_evt);
+ 
+ /*
+  * Common code for stimer0 interrupts coming via Direct Mode or
+@@ -68,7 +68,7 @@ EXPORT_SYMBOL_GPL(hv_stimer0_isr);
+  * stimer0 interrupt handler for architectures that support
+  * per-cpu interrupts, which also implies Direct Mode.
+  */
+-static irqreturn_t hv_stimer0_percpu_isr(int irq, void *dev_id)
++static irqreturn_t __maybe_unused hv_stimer0_percpu_isr(int irq, void *dev_id)
+ {
+ 	hv_stimer0_isr();
+ 	return IRQ_HANDLED;
+@@ -196,6 +196,7 @@ void __weak hv_remove_stimer0_handler(void)
+ {
+ };
+ 
++#ifdef CONFIG_ACPI
+ /* Called only on architectures with per-cpu IRQs (i.e., not x86/x64) */
+ static int hv_setup_stimer0_irq(void)
+ {
+@@ -230,6 +231,16 @@ static void hv_remove_stimer0_irq(void)
+ 		stimer0_irq = -1;
+ 	}
+ }
++#else
++static int hv_setup_stimer0_irq(void)
++{
++	return 0;
++}
++
++static void hv_remove_stimer0_irq(void)
++{
++}
++#endif
+ 
+ /* hv_stimer_alloc - Global initialization of the clockevent and stimer0 */
+ int hv_stimer_alloc(bool have_percpu_irqs)
+
+From 1f6277bf716cc5ba0e3fa0c3e0af1adb4160fb5d Mon Sep 17 00:00:00 2001
+From: Saurabh Sengar <ssengar@linux.microsoft.com>
+Date: Mon, 20 Mar 2023 00:47:37 -0700
+Subject: [PATCH 02/22] ACPI: bus: Add stub acpi_sleep_state_supported() in
+ non-ACPI cases
+
+acpi_sleep_state_supported() is defined only when CONFIG_ACPI=y. The
+function is in acpi_bus.h, and acpi_bus.h can only be used in
+CONFIG_ACPI=y cases. Add the stub function to linux/acpi.h to make
+compilation successful for !CONFIG_ACPI cases.
+
+Signed-off-by: Saurabh Sengar <ssengar@linux.microsoft.com>
+Acked-by: Rafael J. Wysocki <rafael.j.wysocki@intel.com>
+Link: https://lore.kernel.org/r/1679298460-11855-3-git-send-email-ssengar@linux.microsoft.com
+Signed-off-by: Wei Liu <wei.liu@kernel.org>
+---
+ include/linux/acpi.h | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/include/linux/acpi.h b/include/linux/acpi.h
+index efff750f326d65..d331f76b0c19fb 100644
+--- a/include/linux/acpi.h
++++ b/include/linux/acpi.h
+@@ -1075,6 +1075,11 @@ static inline u32 acpi_osc_ctx_get_cxl_control(struct acpi_osc_context *context)
+ 	return 0;
+ }
+ 
++static inline bool acpi_sleep_state_supported(u8 sleep_state)
++{
++	return false;
++}
++
+ #endif	/* !CONFIG_ACPI */
+ 
+ #ifdef CONFIG_ACPI_HOTPLUG_IOAPIC
+
+From 9c8434238041e18d53fd6911826973b37656a8d1 Mon Sep 17 00:00:00 2001
+From: Saurabh Sengar <ssengar@linux.microsoft.com>
+Date: Mon, 20 Mar 2023 00:47:38 -0700
+Subject: [PATCH 03/22] Drivers: hv: vmbus: Convert acpi_device to more generic
+ platform_device
+
+VMBus driver code currently has direct dependency on ACPI and struct
+acpi_device.  As a staging step toward optionally configuring based on
+Devicetree instead of ACPI, use a more generic platform device to reduce
+the dependency on ACPI where possible, though the dependency on ACPI
+is not completely removed.  Also rename the function vmbus_acpi_remove()
+to the more generic vmbus_mmio_remove().
+
+Signed-off-by: Saurabh Sengar <ssengar@linux.microsoft.com>
+Reviewed-by: Michael Kelley <mikelley@microsoft.com>
+Link: https://lore.kernel.org/r/1679298460-11855-4-git-send-email-ssengar@linux.microsoft.com
+Signed-off-by: Wei Liu <wei.liu@kernel.org>
+---
+ drivers/hv/vmbus_drv.c | 58 +++++++++++++++++++++++++-----------------
+ 1 file changed, 35 insertions(+), 23 deletions(-)
+
+diff --git a/drivers/hv/vmbus_drv.c b/drivers/hv/vmbus_drv.c
+index d24dd65b33d4d3..73497157a23ad2 100644
+--- a/drivers/hv/vmbus_drv.c
++++ b/drivers/hv/vmbus_drv.c
+@@ -12,6 +12,7 @@
+ #include <linux/init.h>
+ #include <linux/module.h>
+ #include <linux/device.h>
++#include <linux/platform_device.h>
+ #include <linux/interrupt.h>
+ #include <linux/sysctl.h>
+ #include <linux/slab.h>
+@@ -44,7 +45,7 @@ struct vmbus_dynid {
+ 	struct hv_vmbus_device_id id;
+ };
+ 
+-static struct acpi_device  *hv_acpi_dev;
++static struct device  *hv_dev;
+ 
+ static int hyperv_cpuhp_online;
+ 
+@@ -143,7 +144,7 @@ static DEFINE_MUTEX(hyperv_mmio_lock);
+ 
+ static int vmbus_exists(void)
+ {
+-	if (hv_acpi_dev == NULL)
++	if (hv_dev == NULL)
+ 		return -ENODEV;
+ 
+ 	return 0;
+@@ -932,7 +933,7 @@ static int vmbus_dma_configure(struct device *child_device)
+ 	 * On x86/x64 coherence is assumed and these calls have no effect.
+ 	 */
+ 	hv_setup_dma_ops(child_device,
+-		device_get_dma_attr(&hv_acpi_dev->dev) == DEV_DMA_COHERENT);
++		device_get_dma_attr(hv_dev) == DEV_DMA_COHERENT);
+ 	return 0;
+ }
+ 
+@@ -2090,7 +2091,7 @@ int vmbus_device_register(struct hv_device *child_device_obj)
+ 		     &child_device_obj->channel->offermsg.offer.if_instance);
+ 
+ 	child_device_obj->device.bus = &hv_bus;
+-	child_device_obj->device.parent = &hv_acpi_dev->dev;
++	child_device_obj->device.parent = hv_dev;
+ 	child_device_obj->device.release = vmbus_device_release;
+ 
+ 	child_device_obj->device.dma_parms = &child_device_obj->dma_parms;
+@@ -2262,7 +2263,7 @@ static acpi_status vmbus_walk_resources(struct acpi_resource *res, void *ctx)
+ 	return AE_OK;
+ }
+ 
+-static void vmbus_acpi_remove(struct acpi_device *device)
++static void vmbus_mmio_remove(void)
+ {
+ 	struct resource *cur_res;
+ 	struct resource *next_res;
+@@ -2441,13 +2442,14 @@ void vmbus_free_mmio(resource_size_t start, resource_size_t size)
+ }
+ EXPORT_SYMBOL_GPL(vmbus_free_mmio);
+ 
+-static int vmbus_acpi_add(struct acpi_device *device)
++static int vmbus_acpi_add(struct platform_device *pdev)
+ {
+ 	acpi_status result;
+ 	int ret_val = -ENODEV;
+ 	struct acpi_device *ancestor;
++	struct acpi_device *device = ACPI_COMPANION(&pdev->dev);
+ 
+-	hv_acpi_dev = device;
++	hv_dev = &device->dev;
+ 
+ 	/*
+ 	 * Older versions of Hyper-V for ARM64 fail to include the _CCA
+@@ -2489,10 +2491,21 @@ static int vmbus_acpi_add(struct acpi_device *device)
+ 
+ acpi_walk_err:
+ 	if (ret_val)
+-		vmbus_acpi_remove(device);
++		vmbus_mmio_remove();
+ 	return ret_val;
+ }
+ 
++static int vmbus_platform_driver_probe(struct platform_device *pdev)
++{
++	return vmbus_acpi_add(pdev);
++}
++
++static int vmbus_platform_driver_remove(struct platform_device *pdev)
++{
++	vmbus_mmio_remove();
++	return 0;
++}
++
+ #ifdef CONFIG_PM_SLEEP
+ static int vmbus_bus_suspend(struct device *dev)
+ {
+@@ -2658,15 +2671,15 @@ static const struct dev_pm_ops vmbus_bus_pm = {
+ 	.restore_noirq	= vmbus_bus_resume
+ };
+ 
+-static struct acpi_driver vmbus_acpi_driver = {
+-	.name = "vmbus",
+-	.ids = vmbus_acpi_device_ids,
+-	.ops = {
+-		.add = vmbus_acpi_add,
+-		.remove = vmbus_acpi_remove,
+-	},
+-	.drv.pm = &vmbus_bus_pm,
+-	.drv.probe_type = PROBE_FORCE_SYNCHRONOUS,
++static struct platform_driver vmbus_platform_driver = {
++	.probe = vmbus_platform_driver_probe,
++	.remove = vmbus_platform_driver_remove,
++	.driver = {
++		.name = "vmbus",
++		.acpi_match_table = ACPI_PTR(vmbus_acpi_device_ids),
++		.pm = &vmbus_bus_pm,
++		.probe_type = PROBE_FORCE_SYNCHRONOUS,
++	}
+ };
+ 
+ static void hv_kexec_handler(void)
+@@ -2750,12 +2763,11 @@ static int __init hv_acpi_init(void)
+ 	/*
+ 	 * Get ACPI resources first.
+ 	 */
+-	ret = acpi_bus_register_driver(&vmbus_acpi_driver);
+-
++	ret = platform_driver_register(&vmbus_platform_driver);
+ 	if (ret)
+ 		return ret;
+ 
+-	if (!hv_acpi_dev) {
++	if (!hv_dev) {
+ 		ret = -ENODEV;
+ 		goto cleanup;
+ 	}
+@@ -2785,8 +2797,8 @@ static int __init hv_acpi_init(void)
+ 	return 0;
+ 
+ cleanup:
+-	acpi_bus_unregister_driver(&vmbus_acpi_driver);
+-	hv_acpi_dev = NULL;
++	platform_driver_unregister(&vmbus_platform_driver);
++	hv_dev = NULL;
+ 	return ret;
+ }
+ 
+@@ -2839,7 +2851,7 @@ static void __exit vmbus_exit(void)
+ 
+ 	cpuhp_remove_state(hyperv_cpuhp_online);
+ 	hv_synic_free();
+-	acpi_bus_unregister_driver(&vmbus_acpi_driver);
++	platform_driver_unregister(&vmbus_platform_driver);
+ }
+ 
+ 
+
+From 61f7a325927e6f15de09aef96eea54801b227864 Mon Sep 17 00:00:00 2001
+From: Saurabh Sengar <ssengar@linux.microsoft.com>
+Date: Mon, 20 Mar 2023 00:47:39 -0700
+Subject: [PATCH 04/22] dt-bindings: bus: Add Hyper-V VMBus
+
+Add dt-bindings for Hyper-V VMBus.
+
+Signed-off-by: Saurabh Sengar <ssengar@linux.microsoft.com>
+Reviewed-by: Rob Herring <robh@kernel.org>
+Link: https://lore.kernel.org/r/1679298460-11855-5-git-send-email-ssengar@linux.microsoft.com
+Signed-off-by: Wei Liu <wei.liu@kernel.org>
+---
+ .../bindings/bus/microsoft,vmbus.yaml         | 54 +++++++++++++++++++
+ MAINTAINERS                                   |  1 +
+ 2 files changed, 55 insertions(+)
+ create mode 100644 Documentation/devicetree/bindings/bus/microsoft,vmbus.yaml
+
+diff --git a/Documentation/devicetree/bindings/bus/microsoft,vmbus.yaml b/Documentation/devicetree/bindings/bus/microsoft,vmbus.yaml
+new file mode 100644
+index 00000000000000..a8d40c766dcdfa
+--- /dev/null
++++ b/Documentation/devicetree/bindings/bus/microsoft,vmbus.yaml
+@@ -0,0 +1,54 @@
++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/bus/microsoft,vmbus.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: Microsoft Hyper-V VMBus
++
++maintainers:
++  - Saurabh Sengar <ssengar@linux.microsoft.com>
++
++description:
++  VMBus is a software bus that implement the protocols for communication
++  between the root or host OS and guest OSs (virtual machines).
++
++properties:
++  compatible:
++    const: microsoft,vmbus
++
++  ranges: true
++
++  '#address-cells':
++    const: 2
++
++  '#size-cells':
++    const: 1
++
++required:
++  - compatible
++  - ranges
++  - '#address-cells'
++  - '#size-cells'
++
++additionalProperties: false
++
++examples:
++  - |
++    soc {
++        #address-cells = <2>;
++        #size-cells = <1>;
++        bus {
++            compatible = "simple-bus";
++            #address-cells = <2>;
++            #size-cells = <1>;
++            ranges;
++
++            vmbus@ff0000000 {
++                compatible = "microsoft,vmbus";
++                #address-cells = <2>;
++                #size-cells = <1>;
++                ranges = <0x0f 0xf0000000 0x0f 0xf0000000 0x10000000>;
++            };
++        };
++    };
+diff --git a/MAINTAINERS b/MAINTAINERS
+index 0e64787aace840..90ea0a7fb73326 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -9520,6 +9520,7 @@ S:	Supported
+ T:	git git://git.kernel.org/pub/scm/linux/kernel/git/hyperv/linux.git
+ F:	Documentation/ABI/stable/sysfs-bus-vmbus
+ F:	Documentation/ABI/testing/debugfs-hyperv
++F:	Documentation/devicetree/bindings/bus/microsoft,vmbus.yaml
+ F:	Documentation/virt/hyperv
+ F:	Documentation/networking/device_drivers/ethernet/microsoft/netvsc.rst
+ F:	arch/arm64/hyperv
+
+From f83705a51275ed29117d46e1d68e8b16dcb40507 Mon Sep 17 00:00:00 2001
+From: Saurabh Sengar <ssengar@linux.microsoft.com>
+Date: Mon, 20 Mar 2023 00:47:40 -0700
+Subject: [PATCH 05/22] Driver: VMBus: Add Devicetree support
+
+Update the driver to support Devicetree boot as well along with ACPI.
+At present the Devicetree parsing only provides the mmio region info
+and is not the exact copy of ACPI parsing. This is sufficient to cater
+all the current Devicetree usecases for VMBus.
+
+Currently Devicetree is supported only for x86 systems.
+
+Signed-off-by: Saurabh Sengar <ssengar@linux.microsoft.com>
+Reviewed-by: Michael Kelley <mikelley@microsoft.com>
+Link: https://lore.kernel.org/r/1679298460-11855-6-git-send-email-ssengar@linux.microsoft.com
+Signed-off-by: Wei Liu <wei.liu@kernel.org>
+---
+ drivers/hv/Kconfig     |  5 ++--
+ drivers/hv/vmbus_drv.c | 66 +++++++++++++++++++++++++++++++++++++++---
+ 2 files changed, 65 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/hv/Kconfig b/drivers/hv/Kconfig
+index 0747a8f1fceec9..47132b30b7ee6f 100644
+--- a/drivers/hv/Kconfig
++++ b/drivers/hv/Kconfig
+@@ -4,11 +4,12 @@ menu "Microsoft Hyper-V guest support"
+ 
+ config HYPERV
+ 	tristate "Microsoft Hyper-V client drivers"
+-	depends on ACPI && ((X86 && X86_LOCAL_APIC && HYPERVISOR_GUEST) \
+-		|| (ARM64 && !CPU_BIG_ENDIAN))
++	depends on (X86 && X86_LOCAL_APIC && HYPERVISOR_GUEST) \
++		|| (ACPI && ARM64 && !CPU_BIG_ENDIAN)
+ 	select PARAVIRT
+ 	select X86_HV_CALLBACK_VECTOR if X86
+ 	select VMAP_PFN
++	select OF_EARLY_FLATTREE if OF
+ 	help
+ 	  Select this option to run Linux as a Hyper-V client operating
+ 	  system.
+diff --git a/drivers/hv/vmbus_drv.c b/drivers/hv/vmbus_drv.c
+index 73497157a23ad2..20b4be426e0c1d 100644
+--- a/drivers/hv/vmbus_drv.c
++++ b/drivers/hv/vmbus_drv.c
+@@ -20,6 +20,7 @@
+ #include <linux/completion.h>
+ #include <linux/hyperv.h>
+ #include <linux/kernel_stat.h>
++#include <linux/of_address.h>
+ #include <linux/clockchips.h>
+ #include <linux/cpu.h>
+ #include <linux/sched/isolation.h>
+@@ -2152,7 +2153,7 @@ void vmbus_device_unregister(struct hv_device *device_obj)
+ 	device_unregister(&device_obj->device);
+ }
+ 
+-
++#ifdef CONFIG_ACPI
+ /*
+  * VMBUS is an acpi enumerated device. Get the information we
+  * need from DSDT.
+@@ -2262,6 +2263,7 @@ static acpi_status vmbus_walk_resources(struct acpi_resource *res, void *ctx)
+ 
+ 	return AE_OK;
+ }
++#endif
+ 
+ static void vmbus_mmio_remove(void)
+ {
+@@ -2282,7 +2284,7 @@ static void vmbus_mmio_remove(void)
+ 	}
+ }
+ 
+-static void vmbus_reserve_fb(void)
++static void __maybe_unused vmbus_reserve_fb(void)
+ {
+ 	resource_size_t start = 0, size;
+ 	struct pci_dev *pdev;
+@@ -2442,6 +2444,7 @@ void vmbus_free_mmio(resource_size_t start, resource_size_t size)
+ }
+ EXPORT_SYMBOL_GPL(vmbus_free_mmio);
+ 
++#ifdef CONFIG_ACPI
+ static int vmbus_acpi_add(struct platform_device *pdev)
+ {
+ 	acpi_status result;
+@@ -2494,10 +2497,54 @@ static int vmbus_acpi_add(struct platform_device *pdev)
+ 		vmbus_mmio_remove();
+ 	return ret_val;
+ }
++#else
++static int vmbus_acpi_add(struct platform_device *pdev)
++{
++	return 0;
++}
++#endif
++
++static int vmbus_device_add(struct platform_device *pdev)
++{
++	struct resource **cur_res = &hyperv_mmio;
++	struct of_range range;
++	struct of_range_parser parser;
++	struct device_node *np = pdev->dev.of_node;
++	int ret;
++
++	hv_dev = &pdev->dev;
++
++	ret = of_range_parser_init(&parser, np);
++	if (ret)
++		return ret;
++
++	for_each_of_range(&parser, &range) {
++		struct resource *res;
++
++		res = kzalloc(sizeof(*res), GFP_KERNEL);
++		if (!res) {
++			vmbus_mmio_remove();
++			return -ENOMEM;
++		}
++
++		res->name = "hyperv mmio";
++		res->flags = range.flags;
++		res->start = range.cpu_addr;
++		res->end = range.cpu_addr + range.size;
++
++		*cur_res = res;
++		cur_res = &res->sibling;
++	}
++
++	return ret;
++}
+ 
+ static int vmbus_platform_driver_probe(struct platform_device *pdev)
+ {
+-	return vmbus_acpi_add(pdev);
++	if (acpi_disabled)
++		return vmbus_device_add(pdev);
++	else
++		return vmbus_acpi_add(pdev);
+ }
+ 
+ static int vmbus_platform_driver_remove(struct platform_device *pdev)
+@@ -2643,7 +2690,17 @@ static int vmbus_bus_resume(struct device *dev)
+ #define vmbus_bus_resume NULL
+ #endif /* CONFIG_PM_SLEEP */
+ 
+-static const struct acpi_device_id vmbus_acpi_device_ids[] = {
++static const __maybe_unused struct of_device_id vmbus_of_match[] = {
++	{
++		.compatible = "microsoft,vmbus",
++	},
++	{
++		/* sentinel */
++	},
++};
++MODULE_DEVICE_TABLE(of, vmbus_of_match);
++
++static const __maybe_unused struct acpi_device_id vmbus_acpi_device_ids[] = {
+ 	{"VMBUS", 0},
+ 	{"VMBus", 0},
+ 	{"", 0},
+@@ -2677,6 +2734,7 @@ static struct platform_driver vmbus_platform_driver = {
+ 	.driver = {
+ 		.name = "vmbus",
+ 		.acpi_match_table = ACPI_PTR(vmbus_acpi_device_ids),
++		.of_match_table = of_match_ptr(vmbus_of_match),
+ 		.pm = &vmbus_bus_pm,
+ 		.probe_type = PROBE_FORCE_SYNCHRONOUS,
+ 	}
+
+From 0459ff4873739986dccafbb417cfc69e71bdacf4 Mon Sep 17 00:00:00 2001
+From: Michael Kelley <mikelley@microsoft.com>
+Date: Sun, 26 Mar 2023 06:52:02 -0700
+Subject: [PATCH 06/22] swiotlb: Remove bounce buffer remapping for Hyper-V
+
+With changes to how Hyper-V guest VMs flip memory between private
+(encrypted) and shared (decrypted), creating a second kernel virtual
+mapping for shared memory is no longer necessary. Everything needed
+for the transition to shared is handled by set_memory_decrypted().
+
+As such, remove swiotlb_unencrypted_base and the associated
+code.
+
+Signed-off-by: Michael Kelley <mikelley@microsoft.com>
+Acked-by: Christoph Hellwig <hch@lst.de>
+Acked-by: Borislav Petkov (AMD) <bp@alien8.de>
+Link: https://lore.kernel.org/r/1679838727-87310-8-git-send-email-mikelley@microsoft.com
+Signed-off-by: Wei Liu <wei.liu@kernel.org>
+---
+ arch/x86/kernel/cpu/mshyperv.c |  7 +-----
+ include/linux/swiotlb.h        |  2 --
+ kernel/dma/swiotlb.c           | 45 +---------------------------------
+ 3 files changed, 2 insertions(+), 52 deletions(-)
+
+diff --git a/arch/x86/kernel/cpu/mshyperv.c b/arch/x86/kernel/cpu/mshyperv.c
+index 315fc358e58483..ac630ecde79545 100644
+--- a/arch/x86/kernel/cpu/mshyperv.c
++++ b/arch/x86/kernel/cpu/mshyperv.c
+@@ -18,7 +18,6 @@
+ #include <linux/kexec.h>
+ #include <linux/i8253.h>
+ #include <linux/random.h>
+-#include <linux/swiotlb.h>
+ #include <asm/processor.h>
+ #include <asm/hypervisor.h>
+ #include <asm/hyperv-tlfs.h>
+@@ -408,12 +407,8 @@ static void __init ms_hyperv_init_platform(void)
+ 		pr_info("Hyper-V: Isolation Config: Group A 0x%x, Group B 0x%x\n",
+ 			ms_hyperv.isolation_config_a, ms_hyperv.isolation_config_b);
+ 
+-		if (hv_get_isolation_type() == HV_ISOLATION_TYPE_SNP) {
++		if (hv_get_isolation_type() == HV_ISOLATION_TYPE_SNP)
+ 			static_branch_enable(&isolation_type_snp);
+-#ifdef CONFIG_SWIOTLB
+-			swiotlb_unencrypted_base = ms_hyperv.shared_gpa_boundary;
+-#endif
+-		}
+ 	}
+ 
+ 	if (hv_max_functions_eax >= HYPERV_CPUID_NESTED_FEATURES) {
+diff --git a/include/linux/swiotlb.h b/include/linux/swiotlb.h
+index bcef10e20ea4fa..2ef25e6fa1b4b4 100644
+--- a/include/linux/swiotlb.h
++++ b/include/linux/swiotlb.h
+@@ -180,6 +180,4 @@ static inline bool is_swiotlb_for_alloc(struct device *dev)
+ }
+ #endif /* CONFIG_DMA_RESTRICTED_POOL */
+ 
+-extern phys_addr_t swiotlb_unencrypted_base;
+-
+ #endif /* __LINUX_SWIOTLB_H */
+diff --git a/kernel/dma/swiotlb.c b/kernel/dma/swiotlb.c
+index dac42a2ad5883c..0fb16bdbbcae5d 100644
+--- a/kernel/dma/swiotlb.c
++++ b/kernel/dma/swiotlb.c
+@@ -73,8 +73,6 @@ static bool swiotlb_force_disable;
+ 
+ struct io_tlb_mem io_tlb_default_mem;
+ 
+-phys_addr_t swiotlb_unencrypted_base;
+-
+ static unsigned long default_nslabs = IO_TLB_DEFAULT_SIZE >> IO_TLB_SHIFT;
+ static unsigned long default_nareas;
+ 
+@@ -201,34 +199,6 @@ static inline unsigned long nr_slots(u64 val)
+ 	return DIV_ROUND_UP(val, IO_TLB_SIZE);
+ }
+ 
+-/*
+- * Remap swioltb memory in the unencrypted physical address space
+- * when swiotlb_unencrypted_base is set. (e.g. for Hyper-V AMD SEV-SNP
+- * Isolation VMs).
+- */
+-#ifdef CONFIG_HAS_IOMEM
+-static void *swiotlb_mem_remap(struct io_tlb_mem *mem, unsigned long bytes)
+-{
+-	void *vaddr = NULL;
+-
+-	if (swiotlb_unencrypted_base) {
+-		phys_addr_t paddr = mem->start + swiotlb_unencrypted_base;
+-
+-		vaddr = memremap(paddr, bytes, MEMREMAP_WB);
+-		if (!vaddr)
+-			pr_err("Failed to map the unencrypted memory %pa size %lx.\n",
+-			       &paddr, bytes);
+-	}
+-
+-	return vaddr;
+-}
+-#else
+-static void *swiotlb_mem_remap(struct io_tlb_mem *mem, unsigned long bytes)
+-{
+-	return NULL;
+-}
+-#endif
+-
+ /*
+  * Early SWIOTLB allocation may be too early to allow an architecture to
+  * perform the desired operations.  This function allows the architecture to
+@@ -238,18 +208,12 @@ static void *swiotlb_mem_remap(struct io_tlb_mem *mem, unsigned long bytes)
+ void __init swiotlb_update_mem_attributes(void)
+ {
+ 	struct io_tlb_mem *mem = &io_tlb_default_mem;
+-	void *vaddr;
+ 	unsigned long bytes;
+ 
+ 	if (!mem->nslabs || mem->late_alloc)
+ 		return;
+-	vaddr = phys_to_virt(mem->start);
+ 	bytes = PAGE_ALIGN(mem->nslabs << IO_TLB_SHIFT);
+-	set_memory_decrypted((unsigned long)vaddr, bytes >> PAGE_SHIFT);
+-
+-	mem->vaddr = swiotlb_mem_remap(mem, bytes);
+-	if (!mem->vaddr)
+-		mem->vaddr = vaddr;
++	set_memory_decrypted((unsigned long)mem->vaddr, bytes >> PAGE_SHIFT);
+ }
+ 
+ static void swiotlb_init_io_tlb_mem(struct io_tlb_mem *mem, phys_addr_t start,
+@@ -280,13 +244,6 @@ static void swiotlb_init_io_tlb_mem(struct io_tlb_mem *mem, phys_addr_t start,
+ 		mem->slots[i].alloc_size = 0;
+ 	}
+ 
+-	/*
+-	 * If swiotlb_unencrypted_base is set, the bounce buffer memory will
+-	 * be remapped and cleared in swiotlb_update_mem_attributes.
+-	 */
+-	if (swiotlb_unencrypted_base)
+-		return;
+-
+ 	memset(vaddr, 0, bytes);
+ 	mem->vaddr = vaddr;
+ 	return;
+
+From a5ddb74588213c31ce993a8e9a09d1ffdc11a142 Mon Sep 17 00:00:00 2001
+From: Michael Kelley <mikelley@microsoft.com>
+Date: Sun, 26 Mar 2023 06:52:03 -0700
+Subject: [PATCH 07/22] Drivers: hv: vmbus: Remove second mapping of VMBus
+ monitor pages
+
+With changes to how Hyper-V guest VMs flip memory between private
+(encrypted) and shared (decrypted), creating a second kernel virtual
+mapping for shared memory is no longer necessary.  Everything needed
+for the transition to shared is handled by set_memory_decrypted().
+
+As such, remove the code to create and manage the second
+mapping for VMBus monitor pages. Because set_memory_decrypted()
+and set_memory_encrypted() are no-ops in normal VMs, it's
+not even necessary to test for being in a Confidential VM
+(a.k.a., "Isolation VM").
+
+Signed-off-by: Michael Kelley <mikelley@microsoft.com>
+Reviewed-by: Tianyu Lan <Tianyu.Lan@microsoft.com>
+Link: https://lore.kernel.org/r/1679838727-87310-9-git-send-email-mikelley@microsoft.com
+Signed-off-by: Wei Liu <wei.liu@kernel.org>
+---
+ drivers/hv/connection.c   | 113 ++++++++++----------------------------
+ drivers/hv/hyperv_vmbus.h |   2 -
+ 2 files changed, 28 insertions(+), 87 deletions(-)
+
+diff --git a/drivers/hv/connection.c b/drivers/hv/connection.c
+index da51b50787dff3..5978e9dbc286fb 100644
+--- a/drivers/hv/connection.c
++++ b/drivers/hv/connection.c
+@@ -104,8 +104,14 @@ int vmbus_negotiate_version(struct vmbus_channel_msginfo *msginfo, u32 version)
+ 		vmbus_connection.msg_conn_id = VMBUS_MESSAGE_CONNECTION_ID;
+ 	}
+ 
+-	msg->monitor_page1 = vmbus_connection.monitor_pages_pa[0];
+-	msg->monitor_page2 = vmbus_connection.monitor_pages_pa[1];
++	/*
++	 * shared_gpa_boundary is zero in non-SNP VMs, so it's safe to always
++	 * bitwise OR it
++	 */
++	msg->monitor_page1 = virt_to_phys(vmbus_connection.monitor_pages[0]) |
++				ms_hyperv.shared_gpa_boundary;
++	msg->monitor_page2 = virt_to_phys(vmbus_connection.monitor_pages[1]) |
++				ms_hyperv.shared_gpa_boundary;
+ 
+ 	msg->target_vcpu = hv_cpu_number_to_vp_number(VMBUS_CONNECT_CPU);
+ 
+@@ -219,72 +225,27 @@ int vmbus_connect(void)
+ 	 * Setup the monitor notification facility. The 1st page for
+ 	 * parent->child and the 2nd page for child->parent
+ 	 */
+-	vmbus_connection.monitor_pages[0] = (void *)hv_alloc_hyperv_zeroed_page();
+-	vmbus_connection.monitor_pages[1] = (void *)hv_alloc_hyperv_zeroed_page();
++	vmbus_connection.monitor_pages[0] = (void *)hv_alloc_hyperv_page();
++	vmbus_connection.monitor_pages[1] = (void *)hv_alloc_hyperv_page();
+ 	if ((vmbus_connection.monitor_pages[0] == NULL) ||
+ 	    (vmbus_connection.monitor_pages[1] == NULL)) {
+ 		ret = -ENOMEM;
+ 		goto cleanup;
+ 	}
+ 
+-	vmbus_connection.monitor_pages_original[0]
+-		= vmbus_connection.monitor_pages[0];
+-	vmbus_connection.monitor_pages_original[1]
+-		= vmbus_connection.monitor_pages[1];
+-	vmbus_connection.monitor_pages_pa[0]
+-		= virt_to_phys(vmbus_connection.monitor_pages[0]);
+-	vmbus_connection.monitor_pages_pa[1]
+-		= virt_to_phys(vmbus_connection.monitor_pages[1]);
+-
+-	if (hv_is_isolation_supported()) {
+-		ret = set_memory_decrypted((unsigned long)
+-					   vmbus_connection.monitor_pages[0],
+-					   1);
+-		ret |= set_memory_decrypted((unsigned long)
+-					    vmbus_connection.monitor_pages[1],
+-					    1);
+-		if (ret)
+-			goto cleanup;
+-
+-		/*
+-		 * Isolation VM with AMD SNP needs to access monitor page via
+-		 * address space above shared gpa boundary.
+-		 */
+-		if (hv_isolation_type_snp()) {
+-			vmbus_connection.monitor_pages_pa[0] +=
+-				ms_hyperv.shared_gpa_boundary;
+-			vmbus_connection.monitor_pages_pa[1] +=
+-				ms_hyperv.shared_gpa_boundary;
+-
+-			vmbus_connection.monitor_pages[0]
+-				= memremap(vmbus_connection.monitor_pages_pa[0],
+-					   HV_HYP_PAGE_SIZE,
+-					   MEMREMAP_WB);
+-			if (!vmbus_connection.monitor_pages[0]) {
+-				ret = -ENOMEM;
+-				goto cleanup;
+-			}
+-
+-			vmbus_connection.monitor_pages[1]
+-				= memremap(vmbus_connection.monitor_pages_pa[1],
+-					   HV_HYP_PAGE_SIZE,
+-					   MEMREMAP_WB);
+-			if (!vmbus_connection.monitor_pages[1]) {
+-				ret = -ENOMEM;
+-				goto cleanup;
+-			}
+-		}
+-
+-		/*
+-		 * Set memory host visibility hvcall smears memory
+-		 * and so zero monitor pages here.
+-		 */
+-		memset(vmbus_connection.monitor_pages[0], 0x00,
+-		       HV_HYP_PAGE_SIZE);
+-		memset(vmbus_connection.monitor_pages[1], 0x00,
+-		       HV_HYP_PAGE_SIZE);
++	ret = set_memory_decrypted((unsigned long)
++				vmbus_connection.monitor_pages[0], 1);
++	ret |= set_memory_decrypted((unsigned long)
++				vmbus_connection.monitor_pages[1], 1);
++	if (ret)
++		goto cleanup;
+ 
+-	}
++	/*
++	 * Set_memory_decrypted() will change the memory contents if
++	 * decryption occurs, so zero monitor pages here.
++	 */
++	memset(vmbus_connection.monitor_pages[0], 0x00, HV_HYP_PAGE_SIZE);
++	memset(vmbus_connection.monitor_pages[1], 0x00, HV_HYP_PAGE_SIZE);
+ 
+ 	msginfo = kzalloc(sizeof(*msginfo) +
+ 			  sizeof(struct vmbus_channel_initiate_contact),
+@@ -376,31 +337,13 @@ void vmbus_disconnect(void)
+ 		vmbus_connection.int_page = NULL;
+ 	}
+ 
+-	if (hv_is_isolation_supported()) {
+-		/*
+-		 * memunmap() checks input address is ioremap address or not
+-		 * inside. It doesn't unmap any thing in the non-SNP CVM and
+-		 * so not check CVM type here.
+-		 */
+-		memunmap(vmbus_connection.monitor_pages[0]);
+-		memunmap(vmbus_connection.monitor_pages[1]);
+-
+-		set_memory_encrypted((unsigned long)
+-			vmbus_connection.monitor_pages_original[0],
+-			1);
+-		set_memory_encrypted((unsigned long)
+-			vmbus_connection.monitor_pages_original[1],
+-			1);
+-	}
++	set_memory_encrypted((unsigned long)vmbus_connection.monitor_pages[0], 1);
++	set_memory_encrypted((unsigned long)vmbus_connection.monitor_pages[1], 1);
+ 
+-	hv_free_hyperv_page((unsigned long)
+-		vmbus_connection.monitor_pages_original[0]);
+-	hv_free_hyperv_page((unsigned long)
+-		vmbus_connection.monitor_pages_original[1]);
+-	vmbus_connection.monitor_pages_original[0] =
+-		vmbus_connection.monitor_pages[0] = NULL;
+-	vmbus_connection.monitor_pages_original[1] =
+-		vmbus_connection.monitor_pages[1] = NULL;
++	hv_free_hyperv_page((unsigned long)vmbus_connection.monitor_pages[0]);
++	hv_free_hyperv_page((unsigned long)vmbus_connection.monitor_pages[1]);
++	vmbus_connection.monitor_pages[0] = NULL;
++	vmbus_connection.monitor_pages[1] = NULL;
+ }
+ 
+ /*
+diff --git a/drivers/hv/hyperv_vmbus.h b/drivers/hv/hyperv_vmbus.h
+index dc673edf053c3b..167ac5115a7894 100644
+--- a/drivers/hv/hyperv_vmbus.h
++++ b/drivers/hv/hyperv_vmbus.h
+@@ -241,8 +241,6 @@ struct vmbus_connection {
+ 	 * is child->parent notification
+ 	 */
+ 	struct hv_monitor_page *monitor_pages[2];
+-	void *monitor_pages_original[2];
+-	phys_addr_t monitor_pages_pa[2];
+ 	struct list_head chn_msg_list;
+ 	spinlock_t channelmsg_lock;
+ 
+
+From bb862397f48fc79a1ea31b83a0bd8f1f913b4ab6 Mon Sep 17 00:00:00 2001
+From: Michael Kelley <mikelley@microsoft.com>
+Date: Sun, 26 Mar 2023 06:52:04 -0700
+Subject: [PATCH 08/22] Drivers: hv: vmbus: Remove second way of mapping ring
+ buffers
+
+With changes to how Hyper-V guest VMs flip memory between private
+(encrypted) and shared (decrypted), it's no longer necessary to
+have separate code paths for mapping VMBus ring buffers for
+for normal VMs and for Confidential VMs.
+
+As such, remove the code path that uses vmap_pfn(), and set
+the protection flags argument to vmap() to account for the
+difference between normal and Confidential VMs.
+
+Signed-off-by: Michael Kelley <mikelley@microsoft.com>
+Reviewed-by: Tianyu Lan <Tianyu.Lan@microsoft.com>
+Link: https://lore.kernel.org/r/1679838727-87310-10-git-send-email-mikelley@microsoft.com
+Signed-off-by: Wei Liu <wei.liu@kernel.org>
+---
+ drivers/hv/ring_buffer.c | 62 +++++++++++++---------------------------
+ 1 file changed, 20 insertions(+), 42 deletions(-)
+
+diff --git a/drivers/hv/ring_buffer.c b/drivers/hv/ring_buffer.c
+index 2111e97c3b6389..3c9b02471760a3 100644
+--- a/drivers/hv/ring_buffer.c
++++ b/drivers/hv/ring_buffer.c
+@@ -186,8 +186,6 @@ int hv_ringbuffer_init(struct hv_ring_buffer_info *ring_info,
+ 		       struct page *pages, u32 page_cnt, u32 max_pkt_size)
+ {
+ 	struct page **pages_wraparound;
+-	unsigned long *pfns_wraparound;
+-	u64 pfn;
+ 	int i;
+ 
+ 	BUILD_BUG_ON((sizeof(struct hv_ring_buffer) != PAGE_SIZE));
+@@ -196,50 +194,30 @@ int hv_ringbuffer_init(struct hv_ring_buffer_info *ring_info,
+ 	 * First page holds struct hv_ring_buffer, do wraparound mapping for
+ 	 * the rest.
+ 	 */
+-	if (hv_isolation_type_snp()) {
+-		pfn = page_to_pfn(pages) +
+-			PFN_DOWN(ms_hyperv.shared_gpa_boundary);
++	pages_wraparound = kcalloc(page_cnt * 2 - 1,
++				   sizeof(struct page *),
++				   GFP_KERNEL);
++	if (!pages_wraparound)
++		return -ENOMEM;
+ 
+-		pfns_wraparound = kcalloc(page_cnt * 2 - 1,
+-			sizeof(unsigned long), GFP_KERNEL);
+-		if (!pfns_wraparound)
+-			return -ENOMEM;
+-
+-		pfns_wraparound[0] = pfn;
+-		for (i = 0; i < 2 * (page_cnt - 1); i++)
+-			pfns_wraparound[i + 1] = pfn + i % (page_cnt - 1) + 1;
+-
+-		ring_info->ring_buffer = (struct hv_ring_buffer *)
+-			vmap_pfn(pfns_wraparound, page_cnt * 2 - 1,
+-				 pgprot_decrypted(PAGE_KERNEL));
+-		kfree(pfns_wraparound);
+-
+-		if (!ring_info->ring_buffer)
+-			return -ENOMEM;
+-
+-		/* Zero ring buffer after setting memory host visibility. */
+-		memset(ring_info->ring_buffer, 0x00, PAGE_SIZE * page_cnt);
+-	} else {
+-		pages_wraparound = kcalloc(page_cnt * 2 - 1,
+-					   sizeof(struct page *),
+-					   GFP_KERNEL);
+-		if (!pages_wraparound)
+-			return -ENOMEM;
+-
+-		pages_wraparound[0] = pages;
+-		for (i = 0; i < 2 * (page_cnt - 1); i++)
+-			pages_wraparound[i + 1] =
+-				&pages[i % (page_cnt - 1) + 1];
++	pages_wraparound[0] = pages;
++	for (i = 0; i < 2 * (page_cnt - 1); i++)
++		pages_wraparound[i + 1] =
++			&pages[i % (page_cnt - 1) + 1];
+ 
+-		ring_info->ring_buffer = (struct hv_ring_buffer *)
+-			vmap(pages_wraparound, page_cnt * 2 - 1, VM_MAP,
+-				PAGE_KERNEL);
++	ring_info->ring_buffer = (struct hv_ring_buffer *)
++		vmap(pages_wraparound, page_cnt * 2 - 1, VM_MAP,
++			pgprot_decrypted(PAGE_KERNEL));
+ 
+-		kfree(pages_wraparound);
+-		if (!ring_info->ring_buffer)
+-			return -ENOMEM;
+-	}
++	kfree(pages_wraparound);
++	if (!ring_info->ring_buffer)
++		return -ENOMEM;
+ 
++	/*
++	 * Ensure the header page is zero'ed since
++	 * encryption status may have changed.
++	 */
++	memset(ring_info->ring_buffer, 0, HV_HYP_PAGE_SIZE);
+ 
+ 	ring_info->ring_buffer->read_index =
+ 		ring_info->ring_buffer->write_index = 0;
+
+From 25727aaed6514b88f98a18862c6f2d65a0b0ec3b Mon Sep 17 00:00:00 2001
+From: Michael Kelley <mikelley@microsoft.com>
+Date: Sun, 26 Mar 2023 06:52:05 -0700
+Subject: [PATCH 09/22] hv_netvsc: Remove second mapping of send and recv
+ buffers
+
+With changes to how Hyper-V guest VMs flip memory between private
+(encrypted) and shared (decrypted), creating a second kernel virtual
+mapping for shared memory is no longer necessary.  Everything needed
+for the transition to shared is handled by set_memory_decrypted().
+
+As such, remove the code to create and manage the second
+mapping for the pre-allocated send and recv buffers.  This mapping
+is the last user of hv_map_memory()/hv_unmap_memory(), so delete
+these functions as well.  Finally, hv_map_memory() is the last
+user of vmap_pfn() in Hyper-V guest code, so remove the Kconfig
+selection of VMAP_PFN.
+
+Signed-off-by: Michael Kelley <mikelley@microsoft.com>
+Reviewed-by: Tianyu Lan <Tianyu.Lan@microsoft.com>
+Link: https://lore.kernel.org/r/1679838727-87310-11-git-send-email-mikelley@microsoft.com
+Signed-off-by: Wei Liu <wei.liu@kernel.org>
+---
+ arch/x86/hyperv/ivm.c           | 28 -------------------
+ drivers/hv/Kconfig              |  1 -
+ drivers/hv/hv_common.c          | 11 --------
+ drivers/net/hyperv/hyperv_net.h |  2 --
+ drivers/net/hyperv/netvsc.c     | 48 ++-------------------------------
+ include/asm-generic/mshyperv.h  |  2 --
+ 6 files changed, 2 insertions(+), 90 deletions(-)
+
+diff --git a/arch/x86/hyperv/ivm.c b/arch/x86/hyperv/ivm.c
+index f6a020cb1a249b..127d5b7b63de18 100644
+--- a/arch/x86/hyperv/ivm.c
++++ b/arch/x86/hyperv/ivm.c
+@@ -376,34 +376,6 @@ void __init hv_vtom_init(void)
+ 
+ #endif /* CONFIG_AMD_MEM_ENCRYPT */
+ 
+-/*
+- * hv_map_memory - map memory to extra space in the AMD SEV-SNP Isolation VM.
+- */
+-void *hv_map_memory(void *addr, unsigned long size)
+-{
+-	unsigned long *pfns = kcalloc(size / PAGE_SIZE,
+-				      sizeof(unsigned long), GFP_KERNEL);
+-	void *vaddr;
+-	int i;
+-
+-	if (!pfns)
+-		return NULL;
+-
+-	for (i = 0; i < size / PAGE_SIZE; i++)
+-		pfns[i] = vmalloc_to_pfn(addr + i * PAGE_SIZE) +
+-			(ms_hyperv.shared_gpa_boundary >> PAGE_SHIFT);
+-
+-	vaddr = vmap_pfn(pfns, size / PAGE_SIZE, pgprot_decrypted(PAGE_KERNEL));
+-	kfree(pfns);
+-
+-	return vaddr;
+-}
+-
+-void hv_unmap_memory(void *addr)
+-{
+-	vunmap(addr);
+-}
+-
+ enum hv_isolation_type hv_get_isolation_type(void)
+ {
+ 	if (!(ms_hyperv.priv_high & HV_ISOLATION))
+diff --git a/drivers/hv/Kconfig b/drivers/hv/Kconfig
+index 47132b30b7ee6f..94982f08b66104 100644
+--- a/drivers/hv/Kconfig
++++ b/drivers/hv/Kconfig
+@@ -8,7 +8,6 @@ config HYPERV
+ 		|| (ACPI && ARM64 && !CPU_BIG_ENDIAN)
+ 	select PARAVIRT
+ 	select X86_HV_CALLBACK_VECTOR if X86
+-	select VMAP_PFN
+ 	select OF_EARLY_FLATTREE if OF
+ 	help
+ 	  Select this option to run Linux as a Hyper-V client operating
+diff --git a/drivers/hv/hv_common.c b/drivers/hv/hv_common.c
+index 52a6f89ccdbd48..6d40b6c7b23b90 100644
+--- a/drivers/hv/hv_common.c
++++ b/drivers/hv/hv_common.c
+@@ -311,14 +311,3 @@ u64 __weak hv_ghcb_hypercall(u64 control, void *input, void *output, u32 input_s
+ 	return HV_STATUS_INVALID_PARAMETER;
+ }
+ EXPORT_SYMBOL_GPL(hv_ghcb_hypercall);
+-
+-void __weak *hv_map_memory(void *addr, unsigned long size)
+-{
+-	return NULL;
+-}
+-EXPORT_SYMBOL_GPL(hv_map_memory);
+-
+-void __weak hv_unmap_memory(void *addr)
+-{
+-}
+-EXPORT_SYMBOL_GPL(hv_unmap_memory);
+diff --git a/drivers/net/hyperv/hyperv_net.h b/drivers/net/hyperv/hyperv_net.h
+index dd5919ec408bf6..33d51e36391396 100644
+--- a/drivers/net/hyperv/hyperv_net.h
++++ b/drivers/net/hyperv/hyperv_net.h
+@@ -1139,7 +1139,6 @@ struct netvsc_device {
+ 
+ 	/* Receive buffer allocated by us but manages by NetVSP */
+ 	void *recv_buf;
+-	void *recv_original_buf;
+ 	u32 recv_buf_size; /* allocated bytes */
+ 	struct vmbus_gpadl recv_buf_gpadl_handle;
+ 	u32 recv_section_cnt;
+@@ -1148,7 +1147,6 @@ struct netvsc_device {
+ 
+ 	/* Send buffer allocated by us */
+ 	void *send_buf;
+-	void *send_original_buf;
+ 	u32 send_buf_size;
+ 	struct vmbus_gpadl send_buf_gpadl_handle;
+ 	u32 send_section_cnt;
+diff --git a/drivers/net/hyperv/netvsc.c b/drivers/net/hyperv/netvsc.c
+index da737d959e81c0..82e9796c8f5e5f 100644
+--- a/drivers/net/hyperv/netvsc.c
++++ b/drivers/net/hyperv/netvsc.c
+@@ -154,17 +154,8 @@ static void free_netvsc_device(struct rcu_head *head)
+ 	int i;
+ 
+ 	kfree(nvdev->extension);
+-
+-	if (nvdev->recv_original_buf)
+-		vfree(nvdev->recv_original_buf);
+-	else
+-		vfree(nvdev->recv_buf);
+-
+-	if (nvdev->send_original_buf)
+-		vfree(nvdev->send_original_buf);
+-	else
+-		vfree(nvdev->send_buf);
+-
++	vfree(nvdev->recv_buf);
++	vfree(nvdev->send_buf);
+ 	bitmap_free(nvdev->send_section_map);
+ 
+ 	for (i = 0; i < VRSS_CHANNEL_MAX; i++) {
+@@ -347,7 +338,6 @@ static int netvsc_init_buf(struct hv_device *device,
+ 	struct nvsp_message *init_packet;
+ 	unsigned int buf_size;
+ 	int i, ret = 0;
+-	void *vaddr;
+ 
+ 	/* Get receive buffer area. */
+ 	buf_size = device_info->recv_sections * device_info->recv_section_size;
+@@ -383,17 +373,6 @@ static int netvsc_init_buf(struct hv_device *device,
+ 		goto cleanup;
+ 	}
+ 
+-	if (hv_isolation_type_snp()) {
+-		vaddr = hv_map_memory(net_device->recv_buf, buf_size);
+-		if (!vaddr) {
+-			ret = -ENOMEM;
+-			goto cleanup;
+-		}
+-
+-		net_device->recv_original_buf = net_device->recv_buf;
+-		net_device->recv_buf = vaddr;
+-	}
+-
+ 	/* Notify the NetVsp of the gpadl handle */
+ 	init_packet = &net_device->channel_init_pkt;
+ 	memset(init_packet, 0, sizeof(struct nvsp_message));
+@@ -497,17 +476,6 @@ static int netvsc_init_buf(struct hv_device *device,
+ 		goto cleanup;
+ 	}
+ 
+-	if (hv_isolation_type_snp()) {
+-		vaddr = hv_map_memory(net_device->send_buf, buf_size);
+-		if (!vaddr) {
+-			ret = -ENOMEM;
+-			goto cleanup;
+-		}
+-
+-		net_device->send_original_buf = net_device->send_buf;
+-		net_device->send_buf = vaddr;
+-	}
+-
+ 	/* Notify the NetVsp of the gpadl handle */
+ 	init_packet = &net_device->channel_init_pkt;
+ 	memset(init_packet, 0, sizeof(struct nvsp_message));
+@@ -762,12 +730,6 @@ void netvsc_device_remove(struct hv_device *device)
+ 		netvsc_teardown_send_gpadl(device, net_device, ndev);
+ 	}
+ 
+-	if (net_device->recv_original_buf)
+-		hv_unmap_memory(net_device->recv_buf);
+-
+-	if (net_device->send_original_buf)
+-		hv_unmap_memory(net_device->send_buf);
+-
+ 	/* Release all resources */
+ 	free_netvsc_device_rcu(net_device);
+ }
+@@ -1844,12 +1806,6 @@ struct netvsc_device *netvsc_device_add(struct hv_device *device,
+ 	netif_napi_del(&net_device->chan_table[0].napi);
+ 
+ cleanup2:
+-	if (net_device->recv_original_buf)
+-		hv_unmap_memory(net_device->recv_buf);
+-
+-	if (net_device->send_original_buf)
+-		hv_unmap_memory(net_device->send_buf);
+-
+ 	free_netvsc_device(&net_device->rcu);
+ 
+ 	return ERR_PTR(ret);
+diff --git a/include/asm-generic/mshyperv.h b/include/asm-generic/mshyperv.h
+index 90d7f68ed39d6e..afcd9ae9588cbb 100644
+--- a/include/asm-generic/mshyperv.h
++++ b/include/asm-generic/mshyperv.h
+@@ -271,8 +271,6 @@ u64 hv_ghcb_hypercall(u64 control, void *input, void *output, u32 input_size);
+ void hyperv_cleanup(void);
+ bool hv_query_ext_cap(u64 cap_query);
+ void hv_setup_dma_ops(struct device *dev, bool coherent);
+-void *hv_map_memory(void *addr, unsigned long size);
+-void hv_unmap_memory(void *addr);
+ #else /* CONFIG_HYPERV */
+ static inline bool hv_is_hyperv_initialized(void) { return false; }
+ static inline bool hv_is_hibernation_supported(void) { return false; }
+
+From 6afd9dc1a4b158456c072580f0851b4dbaaa02f1 Mon Sep 17 00:00:00 2001
+From: Michael Kelley <mikelley@microsoft.com>
+Date: Sun, 26 Mar 2023 06:52:06 -0700
+Subject: [PATCH 10/22] Drivers: hv: Don't remap addresses that are above
+ shared_gpa_boundary
+
+With the vTOM bit now treated as a protection flag and not part of
+the physical address, avoid remapping physical addresses with vTOM set
+since technically such addresses aren't valid.  Use ioremap_cache()
+instead of memremap() to ensure that the mapping provides decrypted
+access, which will correctly set the vTOM bit as a protection flag.
+
+While this change is not required for correctness with the current
+implementation of memremap(), for general code hygiene it's better to
+not depend on the mapping functions doing something reasonable with
+a physical address that is out-of-range.
+
+While here, fix typos in two error messages.
+
+Signed-off-by: Michael Kelley <mikelley@microsoft.com>
+Reviewed-by: Tianyu Lan <Tianyu.Lan@microsoft.com>
+Link: https://lore.kernel.org/r/1679838727-87310-12-git-send-email-mikelley@microsoft.com
+Signed-off-by: Wei Liu <wei.liu@kernel.org>
+---
+ arch/x86/hyperv/hv_init.c |  7 +++++--
+ drivers/hv/hv.c           | 23 +++++++++++++----------
+ 2 files changed, 18 insertions(+), 12 deletions(-)
+
+diff --git a/arch/x86/hyperv/hv_init.c b/arch/x86/hyperv/hv_init.c
+index edbc67ec1f3ecf..a5f9474f08e123 100644
+--- a/arch/x86/hyperv/hv_init.c
++++ b/arch/x86/hyperv/hv_init.c
+@@ -63,7 +63,10 @@ static int hyperv_init_ghcb(void)
+ 	 * memory boundary and map it here.
+ 	 */
+ 	rdmsrl(MSR_AMD64_SEV_ES_GHCB, ghcb_gpa);
+-	ghcb_va = memremap(ghcb_gpa, HV_HYP_PAGE_SIZE, MEMREMAP_WB);
++
++	/* Mask out vTOM bit. ioremap_cache() maps decrypted */
++	ghcb_gpa &= ~ms_hyperv.shared_gpa_boundary;
++	ghcb_va = (void *)ioremap_cache(ghcb_gpa, HV_HYP_PAGE_SIZE);
+ 	if (!ghcb_va)
+ 		return -ENOMEM;
+ 
+@@ -217,7 +220,7 @@ static int hv_cpu_die(unsigned int cpu)
+ 	if (hv_ghcb_pg) {
+ 		ghcb_va = (void **)this_cpu_ptr(hv_ghcb_pg);
+ 		if (*ghcb_va)
+-			memunmap(*ghcb_va);
++			iounmap(*ghcb_va);
+ 		*ghcb_va = NULL;
+ 	}
+ 
+diff --git a/drivers/hv/hv.c b/drivers/hv/hv.c
+index 8b0dd8e5244d70..008234894d2878 100644
+--- a/drivers/hv/hv.c
++++ b/drivers/hv/hv.c
+@@ -217,11 +217,13 @@ void hv_synic_enable_regs(unsigned int cpu)
+ 	simp.simp_enabled = 1;
+ 
+ 	if (hv_isolation_type_snp() || hv_root_partition) {
++		/* Mask out vTOM bit. ioremap_cache() maps decrypted */
++		u64 base = (simp.base_simp_gpa << HV_HYP_PAGE_SHIFT) &
++				~ms_hyperv.shared_gpa_boundary;
+ 		hv_cpu->synic_message_page
+-			= memremap(simp.base_simp_gpa << HV_HYP_PAGE_SHIFT,
+-				   HV_HYP_PAGE_SIZE, MEMREMAP_WB);
++			= (void *)ioremap_cache(base, HV_HYP_PAGE_SIZE);
+ 		if (!hv_cpu->synic_message_page)
+-			pr_err("Fail to map syinc message page.\n");
++			pr_err("Fail to map synic message page.\n");
+ 	} else {
+ 		simp.base_simp_gpa = virt_to_phys(hv_cpu->synic_message_page)
+ 			>> HV_HYP_PAGE_SHIFT;
+@@ -234,12 +236,13 @@ void hv_synic_enable_regs(unsigned int cpu)
+ 	siefp.siefp_enabled = 1;
+ 
+ 	if (hv_isolation_type_snp() || hv_root_partition) {
+-		hv_cpu->synic_event_page =
+-			memremap(siefp.base_siefp_gpa << HV_HYP_PAGE_SHIFT,
+-				 HV_HYP_PAGE_SIZE, MEMREMAP_WB);
+-
++		/* Mask out vTOM bit. ioremap_cache() maps decrypted */
++		u64 base = (siefp.base_siefp_gpa << HV_HYP_PAGE_SHIFT) &
++				~ms_hyperv.shared_gpa_boundary;
++		hv_cpu->synic_event_page
++			= (void *)ioremap_cache(base, HV_HYP_PAGE_SIZE);
+ 		if (!hv_cpu->synic_event_page)
+-			pr_err("Fail to map syinc event page.\n");
++			pr_err("Fail to map synic event page.\n");
+ 	} else {
+ 		siefp.base_siefp_gpa = virt_to_phys(hv_cpu->synic_event_page)
+ 			>> HV_HYP_PAGE_SHIFT;
+@@ -316,7 +319,7 @@ void hv_synic_disable_regs(unsigned int cpu)
+ 	 */
+ 	simp.simp_enabled = 0;
+ 	if (hv_isolation_type_snp() || hv_root_partition) {
+-		memunmap(hv_cpu->synic_message_page);
++		iounmap(hv_cpu->synic_message_page);
+ 		hv_cpu->synic_message_page = NULL;
+ 	} else {
+ 		simp.base_simp_gpa = 0;
+@@ -328,7 +331,7 @@ void hv_synic_disable_regs(unsigned int cpu)
+ 	siefp.siefp_enabled = 0;
+ 
+ 	if (hv_isolation_type_snp() || hv_root_partition) {
+-		memunmap(hv_cpu->synic_event_page);
++		iounmap(hv_cpu->synic_event_page);
+ 		hv_cpu->synic_event_page = NULL;
+ 	} else {
+ 		siefp.base_siefp_gpa = 0;
+
+From 2c6ba4216844ca7918289b49ed5f3f7138ee2402 Mon Sep 17 00:00:00 2001
+From: Michael Kelley <mikelley@microsoft.com>
+Date: Sun, 26 Mar 2023 06:52:07 -0700
+Subject: [PATCH 11/22] PCI: hv: Enable PCI pass-thru devices in Confidential
+ VMs
+
+For PCI pass-thru devices in a Confidential VM, Hyper-V requires
+that PCI config space be accessed via hypercalls.  In normal VMs,
+config space accesses are trapped to the Hyper-V host and emulated.
+But in a confidential VM, the host can't access guest memory to
+decode the instruction for emulation, so an explicit hypercall must
+be used.
+
+Add functions to make the new MMIO read and MMIO write hypercalls.
+Update the PCI config space access functions to use the hypercalls
+when such use is indicated by Hyper-V flags.  Also, set the flag to
+allow the Hyper-V PCI driver to be loaded and used in a Confidential
+VM (a.k.a., "Isolation VM").  The driver has previously been hardened
+against a malicious Hyper-V host[1].
+
+[1] https://lore.kernel.org/all/20220511223207.3386-2-parri.andrea@gmail.com/
+
+Co-developed-by: Dexuan Cui <decui@microsoft.com>
+Signed-off-by: Dexuan Cui <decui@microsoft.com>
+Signed-off-by: Michael Kelley <mikelley@microsoft.com>
+Reviewed-by: Boqun Feng <boqun.feng@gmail.com>
+Reviewed-by: Haiyang Zhang <haiyangz@microsoft.com>
+Link: https://lore.kernel.org/r/1679838727-87310-13-git-send-email-mikelley@microsoft.com
+Signed-off-by: Wei Liu <wei.liu@kernel.org>
+---
+ arch/x86/include/asm/hyperv-tlfs.h  |   3 +
+ drivers/hv/channel_mgmt.c           |   2 +-
+ drivers/pci/controller/pci-hyperv.c | 232 ++++++++++++++++++++--------
+ include/asm-generic/hyperv-tlfs.h   |  22 +++
+ 4 files changed, 194 insertions(+), 65 deletions(-)
+
+diff --git a/arch/x86/include/asm/hyperv-tlfs.h b/arch/x86/include/asm/hyperv-tlfs.h
+index 0b73a809e9e18d..b4fb75bd101381 100644
+--- a/arch/x86/include/asm/hyperv-tlfs.h
++++ b/arch/x86/include/asm/hyperv-tlfs.h
+@@ -122,6 +122,9 @@
+ /* Recommend using enlightened VMCS */
+ #define HV_X64_ENLIGHTENED_VMCS_RECOMMENDED		BIT(14)
+ 
++/* Use hypercalls for MMIO config space access */
++#define HV_X64_USE_MMIO_HYPERCALLS			BIT(21)
++
+ /*
+  * CPU management features identification.
+  * These are HYPERV_CPUID_CPU_MANAGEMENT_FEATURES.EAX bits.
+diff --git a/drivers/hv/channel_mgmt.c b/drivers/hv/channel_mgmt.c
+index cc23b90cae02f9..007f26d5f1a452 100644
+--- a/drivers/hv/channel_mgmt.c
++++ b/drivers/hv/channel_mgmt.c
+@@ -67,7 +67,7 @@ const struct vmbus_device vmbus_devs[] = {
+ 	{ .dev_type = HV_PCIE,
+ 	  HV_PCIE_GUID,
+ 	  .perf_device = false,
+-	  .allowed_in_isolated = false,
++	  .allowed_in_isolated = true,
+ 	},
+ 
+ 	/* Synthetic Frame Buffer */
+diff --git a/drivers/pci/controller/pci-hyperv.c b/drivers/pci/controller/pci-hyperv.c
+index f33370b7562830..337f3b4a04fc09 100644
+--- a/drivers/pci/controller/pci-hyperv.c
++++ b/drivers/pci/controller/pci-hyperv.c
+@@ -514,6 +514,7 @@ struct hv_pcibus_device {
+ 
+ 	/* Highest slot of child device with resources allocated */
+ 	int wslot_res_allocated;
++	bool use_calls; /* Use hypercalls to access mmio cfg space */
+ 
+ 	/* hypercall arg, must not cross page boundary */
+ 	struct hv_retarget_device_interrupt retarget_msi_interrupt_params;
+@@ -1041,6 +1042,70 @@ static int wslot_to_devfn(u32 wslot)
+ 	return PCI_DEVFN(slot_no.bits.dev, slot_no.bits.func);
+ }
+ 
++static void hv_pci_read_mmio(struct device *dev, phys_addr_t gpa, int size, u32 *val)
++{
++	struct hv_mmio_read_input *in;
++	struct hv_mmio_read_output *out;
++	u64 ret;
++
++	/*
++	 * Must be called with interrupts disabled so it is safe
++	 * to use the per-cpu input argument page.  Use it for
++	 * both input and output.
++	 */
++	in = *this_cpu_ptr(hyperv_pcpu_input_arg);
++	out = *this_cpu_ptr(hyperv_pcpu_input_arg) + sizeof(*in);
++	in->gpa = gpa;
++	in->size = size;
++
++	ret = hv_do_hypercall(HVCALL_MMIO_READ, in, out);
++	if (hv_result_success(ret)) {
++		switch (size) {
++		case 1:
++			*val = *(u8 *)(out->data);
++			break;
++		case 2:
++			*val = *(u16 *)(out->data);
++			break;
++		default:
++			*val = *(u32 *)(out->data);
++			break;
++		}
++	} else
++		dev_err(dev, "MMIO read hypercall error %llx addr %llx size %d\n",
++				ret, gpa, size);
++}
++
++static void hv_pci_write_mmio(struct device *dev, phys_addr_t gpa, int size, u32 val)
++{
++	struct hv_mmio_write_input *in;
++	u64 ret;
++
++	/*
++	 * Must be called with interrupts disabled so it is safe
++	 * to use the per-cpu input argument memory.
++	 */
++	in = *this_cpu_ptr(hyperv_pcpu_input_arg);
++	in->gpa = gpa;
++	in->size = size;
++	switch (size) {
++	case 1:
++		*(u8 *)(in->data) = val;
++		break;
++	case 2:
++		*(u16 *)(in->data) = val;
++		break;
++	default:
++		*(u32 *)(in->data) = val;
++		break;
++	}
++
++	ret = hv_do_hypercall(HVCALL_MMIO_WRITE, in, NULL);
++	if (!hv_result_success(ret))
++		dev_err(dev, "MMIO write hypercall error %llx addr %llx size %d\n",
++				ret, gpa, size);
++}
++
+ /*
+  * PCI Configuration Space for these root PCI buses is implemented as a pair
+  * of pages in memory-mapped I/O space.  Writing to the first page chooses
+@@ -1059,8 +1124,10 @@ static int wslot_to_devfn(u32 wslot)
+ static void _hv_pcifront_read_config(struct hv_pci_dev *hpdev, int where,
+ 				     int size, u32 *val)
+ {
++	struct hv_pcibus_device *hbus = hpdev->hbus;
++	struct device *dev = &hbus->hdev->device;
++	int offset = where + CFG_PAGE_OFFSET;
+ 	unsigned long flags;
+-	void __iomem *addr = hpdev->hbus->cfg_addr + CFG_PAGE_OFFSET + where;
+ 
+ 	/*
+ 	 * If the attempt is to read the IDs or the ROM BAR, simulate that.
+@@ -1088,56 +1155,79 @@ static void _hv_pcifront_read_config(struct hv_pci_dev *hpdev, int where,
+ 		 */
+ 		*val = 0;
+ 	} else if (where + size <= CFG_PAGE_SIZE) {
+-		spin_lock_irqsave(&hpdev->hbus->config_lock, flags);
+-		/* Choose the function to be read. (See comment above) */
+-		writel(hpdev->desc.win_slot.slot, hpdev->hbus->cfg_addr);
+-		/* Make sure the function was chosen before we start reading. */
+-		mb();
+-		/* Read from that function's config space. */
+-		switch (size) {
+-		case 1:
+-			*val = readb(addr);
+-			break;
+-		case 2:
+-			*val = readw(addr);
+-			break;
+-		default:
+-			*val = readl(addr);
+-			break;
++
++		spin_lock_irqsave(&hbus->config_lock, flags);
++		if (hbus->use_calls) {
++			phys_addr_t addr = hbus->mem_config->start + offset;
++
++			hv_pci_write_mmio(dev, hbus->mem_config->start, 4,
++						hpdev->desc.win_slot.slot);
++			hv_pci_read_mmio(dev, addr, size, val);
++		} else {
++			void __iomem *addr = hbus->cfg_addr + offset;
++
++			/* Choose the function to be read. (See comment above) */
++			writel(hpdev->desc.win_slot.slot, hbus->cfg_addr);
++			/* Make sure the function was chosen before reading. */
++			mb();
++			/* Read from that function's config space. */
++			switch (size) {
++			case 1:
++				*val = readb(addr);
++				break;
++			case 2:
++				*val = readw(addr);
++				break;
++			default:
++				*val = readl(addr);
++				break;
++			}
++			/*
++			 * Make sure the read was done before we release the
++			 * spinlock allowing consecutive reads/writes.
++			 */
++			mb();
+ 		}
+-		/*
+-		 * Make sure the read was done before we release the spinlock
+-		 * allowing consecutive reads/writes.
+-		 */
+-		mb();
+-		spin_unlock_irqrestore(&hpdev->hbus->config_lock, flags);
++		spin_unlock_irqrestore(&hbus->config_lock, flags);
+ 	} else {
+-		dev_err(&hpdev->hbus->hdev->device,
+-			"Attempt to read beyond a function's config space.\n");
++		dev_err(dev, "Attempt to read beyond a function's config space.\n");
+ 	}
+ }
+ 
+ static u16 hv_pcifront_get_vendor_id(struct hv_pci_dev *hpdev)
+ {
++	struct hv_pcibus_device *hbus = hpdev->hbus;
++	struct device *dev = &hbus->hdev->device;
++	u32 val;
+ 	u16 ret;
+ 	unsigned long flags;
+-	void __iomem *addr = hpdev->hbus->cfg_addr + CFG_PAGE_OFFSET +
+-			     PCI_VENDOR_ID;
+ 
+-	spin_lock_irqsave(&hpdev->hbus->config_lock, flags);
++	spin_lock_irqsave(&hbus->config_lock, flags);
+ 
+-	/* Choose the function to be read. (See comment above) */
+-	writel(hpdev->desc.win_slot.slot, hpdev->hbus->cfg_addr);
+-	/* Make sure the function was chosen before we start reading. */
+-	mb();
+-	/* Read from that function's config space. */
+-	ret = readw(addr);
+-	/*
+-	 * mb() is not required here, because the spin_unlock_irqrestore()
+-	 * is a barrier.
+-	 */
++	if (hbus->use_calls) {
++		phys_addr_t addr = hbus->mem_config->start +
++					 CFG_PAGE_OFFSET + PCI_VENDOR_ID;
++
++		hv_pci_write_mmio(dev, hbus->mem_config->start, 4,
++					hpdev->desc.win_slot.slot);
++		hv_pci_read_mmio(dev, addr, 2, &val);
++		ret = val;  /* Truncates to 16 bits */
++	} else {
++		void __iomem *addr = hbus->cfg_addr + CFG_PAGE_OFFSET +
++					     PCI_VENDOR_ID;
++		/* Choose the function to be read. (See comment above) */
++		writel(hpdev->desc.win_slot.slot, hbus->cfg_addr);
++		/* Make sure the function was chosen before we start reading. */
++		mb();
++		/* Read from that function's config space. */
++		ret = readw(addr);
++		/*
++		 * mb() is not required here, because the
++		 * spin_unlock_irqrestore() is a barrier.
++		 */
++	}
+ 
+-	spin_unlock_irqrestore(&hpdev->hbus->config_lock, flags);
++	spin_unlock_irqrestore(&hbus->config_lock, flags);
+ 
+ 	return ret;
+ }
+@@ -1152,39 +1242,51 @@ static u16 hv_pcifront_get_vendor_id(struct hv_pci_dev *hpdev)
+ static void _hv_pcifront_write_config(struct hv_pci_dev *hpdev, int where,
+ 				      int size, u32 val)
+ {
++	struct hv_pcibus_device *hbus = hpdev->hbus;
++	struct device *dev = &hbus->hdev->device;
++	int offset = where + CFG_PAGE_OFFSET;
+ 	unsigned long flags;
+-	void __iomem *addr = hpdev->hbus->cfg_addr + CFG_PAGE_OFFSET + where;
+ 
+ 	if (where >= PCI_SUBSYSTEM_VENDOR_ID &&
+ 	    where + size <= PCI_CAPABILITY_LIST) {
+ 		/* SSIDs and ROM BARs are read-only */
+ 	} else if (where >= PCI_COMMAND && where + size <= CFG_PAGE_SIZE) {
+-		spin_lock_irqsave(&hpdev->hbus->config_lock, flags);
+-		/* Choose the function to be written. (See comment above) */
+-		writel(hpdev->desc.win_slot.slot, hpdev->hbus->cfg_addr);
+-		/* Make sure the function was chosen before we start writing. */
+-		wmb();
+-		/* Write to that function's config space. */
+-		switch (size) {
+-		case 1:
+-			writeb(val, addr);
+-			break;
+-		case 2:
+-			writew(val, addr);
+-			break;
+-		default:
+-			writel(val, addr);
+-			break;
++		spin_lock_irqsave(&hbus->config_lock, flags);
++
++		if (hbus->use_calls) {
++			phys_addr_t addr = hbus->mem_config->start + offset;
++
++			hv_pci_write_mmio(dev, hbus->mem_config->start, 4,
++						hpdev->desc.win_slot.slot);
++			hv_pci_write_mmio(dev, addr, size, val);
++		} else {
++			void __iomem *addr = hbus->cfg_addr + offset;
++
++			/* Choose the function to write. (See comment above) */
++			writel(hpdev->desc.win_slot.slot, hbus->cfg_addr);
++			/* Make sure the function was chosen before writing. */
++			wmb();
++			/* Write to that function's config space. */
++			switch (size) {
++			case 1:
++				writeb(val, addr);
++				break;
++			case 2:
++				writew(val, addr);
++				break;
++			default:
++				writel(val, addr);
++				break;
++			}
++			/*
++			 * Make sure the write was done before we release the
++			 * spinlock allowing consecutive reads/writes.
++			 */
++			mb();
+ 		}
+-		/*
+-		 * Make sure the write was done before we release the spinlock
+-		 * allowing consecutive reads/writes.
+-		 */
+-		mb();
+-		spin_unlock_irqrestore(&hpdev->hbus->config_lock, flags);
++		spin_unlock_irqrestore(&hbus->config_lock, flags);
+ 	} else {
+-		dev_err(&hpdev->hbus->hdev->device,
+-			"Attempt to write beyond a function's config space.\n");
++		dev_err(dev, "Attempt to write beyond a function's config space.\n");
+ 	}
+ }
+ 
+@@ -3563,6 +3665,7 @@ static int hv_pci_probe(struct hv_device *hdev,
+ 	hbus->bridge->domain_nr = dom;
+ #ifdef CONFIG_X86
+ 	hbus->sysdata.domain = dom;
++	hbus->use_calls = !!(ms_hyperv.hints & HV_X64_USE_MMIO_HYPERCALLS);
+ #elif defined(CONFIG_ARM64)
+ 	/*
+ 	 * Set the PCI bus parent to be the corresponding VMbus
+@@ -3572,6 +3675,7 @@ static int hv_pci_probe(struct hv_device *hdev,
+ 	 * information to devices created on the bus.
+ 	 */
+ 	hbus->sysdata.parent = hdev->device.parent;
++	hbus->use_calls = false;
+ #endif
+ 
+ 	hbus->hdev = hdev;
+diff --git a/include/asm-generic/hyperv-tlfs.h b/include/asm-generic/hyperv-tlfs.h
+index b870983596b93b..ea406e90146942 100644
+--- a/include/asm-generic/hyperv-tlfs.h
++++ b/include/asm-generic/hyperv-tlfs.h
+@@ -168,6 +168,8 @@ union hv_reference_tsc_msr {
+ #define HVCALL_FLUSH_GUEST_PHYSICAL_ADDRESS_SPACE 0x00af
+ #define HVCALL_FLUSH_GUEST_PHYSICAL_ADDRESS_LIST 0x00b0
+ #define HVCALL_MODIFY_SPARSE_GPA_PAGE_HOST_VISIBILITY 0x00db
++#define HVCALL_MMIO_READ			0x0106
++#define HVCALL_MMIO_WRITE			0x0107
+ 
+ /* Extended hypercalls */
+ #define HV_EXT_CALL_QUERY_CAPABILITIES		0x8001
+@@ -796,4 +798,24 @@ struct hv_memory_hint {
+ 	union hv_gpa_page_range ranges[];
+ } __packed;
+ 
++/* Data structures for HVCALL_MMIO_READ and HVCALL_MMIO_WRITE */
++#define HV_HYPERCALL_MMIO_MAX_DATA_LENGTH 64
++
++struct hv_mmio_read_input {
++	u64 gpa;
++	u32 size;
++	u32 reserved;
++} __packed;
++
++struct hv_mmio_read_output {
++	u8 data[HV_HYPERCALL_MMIO_MAX_DATA_LENGTH];
++} __packed;
++
++struct hv_mmio_write_input {
++	u64 gpa;
++	u32 size;
++	u32 reserved;
++	u8 data[HV_HYPERCALL_MMIO_MAX_DATA_LENGTH];
++} __packed;
++
+ #endif
+
+From c0e96acf884a1ce91c9bdd692c6a425b83c90285 Mon Sep 17 00:00:00 2001
+From: Dexuan Cui <decui@microsoft.com>
+Date: Sat, 8 Apr 2023 14:03:39 -0700
+Subject: [PATCH 12/22] clocksource: hyper-v: make sure Invariant-TSC is used
+ if it is available
+
+If Hyper-V TSC page is unavailable and Invariant-TSC is available,
+currently hyperv_cs_msr (rather than Invariant-TSC) is used by default.
+
+Use Invariant-TSC by default by downgrading hyperv_cs_msr.rating in
+hv_init_tsc_clocksource(), if Invariant-TSC is available.
+
+Signed-off-by: Dexuan Cui <decui@microsoft.com>
+Reviewed-by: Michael Kelley <mikelley@microsoft.com>
+Link: https://lore.kernel.org/r/20230408210339.15085-1-decui@microsoft.com
+Signed-off-by: Wei Liu <wei.liu@kernel.org>
+---
+ drivers/clocksource/hyperv_timer.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/clocksource/hyperv_timer.c b/drivers/clocksource/hyperv_timer.c
+index f32948c8a96fa3..bcd9042a0c9f46 100644
+--- a/drivers/clocksource/hyperv_timer.c
++++ b/drivers/clocksource/hyperv_timer.c
+@@ -517,9 +517,6 @@ static bool __init hv_init_tsc_clocksource(void)
+ {
+ 	union hv_reference_tsc_msr tsc_msr;
+ 
+-	if (!(ms_hyperv.features & HV_MSR_REFERENCE_TSC_AVAILABLE))
+-		return false;
+-
+ 	/*
+ 	 * If Hyper-V offers TSC_INVARIANT, then the virtualized TSC correctly
+ 	 * handles frequency and offset changes due to live migration,
+@@ -536,6 +533,9 @@ static bool __init hv_init_tsc_clocksource(void)
+ 		hyperv_cs_msr.rating = 250;
+ 	}
+ 
++	if (!(ms_hyperv.features & HV_MSR_REFERENCE_TSC_AVAILABLE))
++		return false;
++
+ 	hv_read_reference_counter = read_hv_clock_tsc;
+ 
+ 	/*
+
+From 9a6b1a170ca8627d401fa76112e4920ba8c6314c Mon Sep 17 00:00:00 2001
+From: Dexuan Cui <decui@microsoft.com>
+Date: Sat, 8 Apr 2023 14:34:41 -0700
+Subject: [PATCH 13/22] Drivers: hv: vmbus: Remove the per-CPU post_msg_page
+
+The post_msg_page was introduced in 2014 in
+commit b29ef3546aec ("Drivers: hv: vmbus: Cleanup hv_post_message()")
+
+Commit 68bb7bfb7985 ("X86/Hyper-V: Enable IPI enlightenments") introduced
+the hyperv_pcpu_input_arg in 2018, which can be used in hv_post_message().
+
+Remove post_msg_page to simplify the code a little bit.
+
+Signed-off-by: Dexuan Cui <decui@microsoft.com>
+Reviewed-by: Jinank Jain <jinankjain@linux.microsoft.com>
+Link: https://lore.kernel.org/r/20230408213441.15472-1-decui@microsoft.com
+Signed-off-by: Wei Liu <wei.liu@kernel.org>
+---
+ drivers/hv/hv.c           | 20 +++++---------------
+ drivers/hv/hyperv_vmbus.h |  4 ----
+ 2 files changed, 5 insertions(+), 19 deletions(-)
+
+diff --git a/drivers/hv/hv.c b/drivers/hv/hv.c
+index 008234894d2878..4e1407d59ba0fb 100644
+--- a/drivers/hv/hv.c
++++ b/drivers/hv/hv.c
+@@ -84,14 +84,15 @@ int hv_post_message(union hv_connection_id connection_id,
+ 		  void *payload, size_t payload_size)
+ {
+ 	struct hv_input_post_message *aligned_msg;
+-	struct hv_per_cpu_context *hv_cpu;
++	unsigned long flags;
+ 	u64 status;
+ 
+ 	if (payload_size > HV_MESSAGE_PAYLOAD_BYTE_COUNT)
+ 		return -EMSGSIZE;
+ 
+-	hv_cpu = get_cpu_ptr(hv_context.cpu_context);
+-	aligned_msg = hv_cpu->post_msg_page;
++	local_irq_save(flags);
++
++	aligned_msg = *this_cpu_ptr(hyperv_pcpu_input_arg);
+ 	aligned_msg->connectionid = connection_id;
+ 	aligned_msg->reserved = 0;
+ 	aligned_msg->message_type = message_type;
+@@ -106,11 +107,7 @@ int hv_post_message(union hv_connection_id connection_id,
+ 		status = hv_do_hypercall(HVCALL_POST_MESSAGE,
+ 				aligned_msg, NULL);
+ 
+-	/* Preemption must remain disabled until after the hypercall
+-	 * so some other thread can't get scheduled onto this cpu and
+-	 * corrupt the per-cpu post_msg_page
+-	 */
+-	put_cpu_ptr(hv_cpu);
++	local_irq_restore(flags);
+ 
+ 	return hv_result(status);
+ }
+@@ -162,12 +159,6 @@ int hv_synic_alloc(void)
+ 				goto err;
+ 			}
+ 		}
+-
+-		hv_cpu->post_msg_page = (void *)get_zeroed_page(GFP_ATOMIC);
+-		if (hv_cpu->post_msg_page == NULL) {
+-			pr_err("Unable to allocate post msg page\n");
+-			goto err;
+-		}
+ 	}
+ 
+ 	return 0;
+@@ -190,7 +181,6 @@ void hv_synic_free(void)
+ 
+ 		free_page((unsigned long)hv_cpu->synic_event_page);
+ 		free_page((unsigned long)hv_cpu->synic_message_page);
+-		free_page((unsigned long)hv_cpu->post_msg_page);
+ 	}
+ 
+ 	kfree(hv_context.hv_numa_map);
+diff --git a/drivers/hv/hyperv_vmbus.h b/drivers/hv/hyperv_vmbus.h
+index 167ac5115a7894..55f2086841ae41 100644
+--- a/drivers/hv/hyperv_vmbus.h
++++ b/drivers/hv/hyperv_vmbus.h
+@@ -122,10 +122,6 @@ enum {
+ struct hv_per_cpu_context {
+ 	void *synic_message_page;
+ 	void *synic_event_page;
+-	/*
+-	 * buffer to post messages to the host.
+-	 */
+-	void *post_msg_page;
+ 
+ 	/*
+ 	 * Starting with win8, we can take channel interrupts on any CPU;
+
+From d7b6ba9611aefc4bef207b16db8ff06b726efe35 Mon Sep 17 00:00:00 2001
+From: Michael Kelley <mikelley@microsoft.com>
+Date: Mon, 27 Mar 2023 06:16:06 -0700
+Subject: [PATCH 14/22] x86/hyperv: Add callback filter to cpumask_to_vpset()
+
+When copying CPUs from a Linux cpumask to a Hyper-V VPset,
+cpumask_to_vpset() currently has a "_noself" variant that doesn't copy
+the current CPU to the VPset. Generalize this variant by replacing it
+with a "_skip" variant having a callback function that is invoked for
+each CPU to decide if that CPU should be copied. Update the one caller
+of cpumask_to_vpset_noself() to use the new "_skip" variant instead.
+
+No functional change.
+
+Signed-off-by: Michael Kelley <mikelley@microsoft.com>
+Link: https://lore.kernel.org/r/1679922967-26582-2-git-send-email-mikelley@microsoft.com
+Signed-off-by: Wei Liu <wei.liu@kernel.org>
+---
+ arch/x86/hyperv/hv_apic.c      | 12 ++++++++----
+ include/asm-generic/mshyperv.h | 22 ++++++++++++++--------
+ 2 files changed, 22 insertions(+), 12 deletions(-)
+
+diff --git a/arch/x86/hyperv/hv_apic.c b/arch/x86/hyperv/hv_apic.c
+index fb8b2c088681a2..1fbda2f94184e3 100644
+--- a/arch/x86/hyperv/hv_apic.c
++++ b/arch/x86/hyperv/hv_apic.c
+@@ -96,6 +96,11 @@ static void hv_apic_eoi_write(u32 reg, u32 val)
+ 	wrmsr(HV_X64_MSR_EOI, val, 0);
+ }
+ 
++static bool cpu_is_self(int cpu)
++{
++	return cpu == smp_processor_id();
++}
++
+ /*
+  * IPI implementation on Hyper-V.
+  */
+@@ -128,10 +133,9 @@ static bool __send_ipi_mask_ex(const struct cpumask *mask, int vector,
+ 	 */
+ 	if (!cpumask_equal(mask, cpu_present_mask) || exclude_self) {
+ 		ipi_arg->vp_set.format = HV_GENERIC_SET_SPARSE_4K;
+-		if (exclude_self)
+-			nr_bank = cpumask_to_vpset_noself(&(ipi_arg->vp_set), mask);
+-		else
+-			nr_bank = cpumask_to_vpset(&(ipi_arg->vp_set), mask);
++
++		nr_bank = cpumask_to_vpset_skip(&(ipi_arg->vp_set), mask,
++				exclude_self ? cpu_is_self : NULL);
+ 
+ 		/*
+ 		 * 'nr_bank <= 0' means some CPUs in cpumask can't be
+diff --git a/include/asm-generic/mshyperv.h b/include/asm-generic/mshyperv.h
+index afcd9ae9588cbb..402a8c1c202db4 100644
+--- a/include/asm-generic/mshyperv.h
++++ b/include/asm-generic/mshyperv.h
+@@ -210,10 +210,9 @@ static inline int hv_cpu_number_to_vp_number(int cpu_number)
+ 
+ static inline int __cpumask_to_vpset(struct hv_vpset *vpset,
+ 				    const struct cpumask *cpus,
+-				    bool exclude_self)
++				    bool (*func)(int cpu))
+ {
+ 	int cpu, vcpu, vcpu_bank, vcpu_offset, nr_bank = 1;
+-	int this_cpu = smp_processor_id();
+ 	int max_vcpu_bank = hv_max_vp_index / HV_VCPUS_PER_SPARSE_BANK;
+ 
+ 	/* vpset.valid_bank_mask can represent up to HV_MAX_SPARSE_VCPU_BANKS banks */
+@@ -232,7 +231,7 @@ static inline int __cpumask_to_vpset(struct hv_vpset *vpset,
+ 	 * Some banks may end up being empty but this is acceptable.
+ 	 */
+ 	for_each_cpu(cpu, cpus) {
+-		if (exclude_self && cpu == this_cpu)
++		if (func && func(cpu))
+ 			continue;
+ 		vcpu = hv_cpu_number_to_vp_number(cpu);
+ 		if (vcpu == VP_INVAL)
+@@ -248,17 +247,24 @@ static inline int __cpumask_to_vpset(struct hv_vpset *vpset,
+ 	return nr_bank;
+ }
+ 
++/*
++ * Convert a Linux cpumask into a Hyper-V VPset. In the _skip variant,
++ * 'func' is called for each CPU present in cpumask.  If 'func' returns
++ * true, that CPU is skipped -- i.e., that CPU from cpumask is *not*
++ * added to the Hyper-V VPset. If 'func' is NULL, no CPUs are
++ * skipped.
++ */
+ static inline int cpumask_to_vpset(struct hv_vpset *vpset,
+ 				    const struct cpumask *cpus)
+ {
+-	return __cpumask_to_vpset(vpset, cpus, false);
++	return __cpumask_to_vpset(vpset, cpus, NULL);
+ }
+ 
+-static inline int cpumask_to_vpset_noself(struct hv_vpset *vpset,
+-				    const struct cpumask *cpus)
++static inline int cpumask_to_vpset_skip(struct hv_vpset *vpset,
++				    const struct cpumask *cpus,
++				    bool (*func)(int cpu))
+ {
+-	WARN_ON_ONCE(preemptible());
+-	return __cpumask_to_vpset(vpset, cpus, true);
++	return __cpumask_to_vpset(vpset, cpus, func);
+ }
+ 
+ void hyperv_report_panic(struct pt_regs *regs, long err, bool in_die);
+
+From 493cc07385cf1c6678a6159d410854b8e99aa945 Mon Sep 17 00:00:00 2001
+From: Michael Kelley <mikelley@microsoft.com>
+Date: Mon, 27 Mar 2023 06:16:07 -0700
+Subject: [PATCH 15/22] x86/hyperv: Exclude lazy TLB mode CPUs from enlightened
+ TLB flushes
+
+In the case where page tables are not freed, native_flush_tlb_multi()
+does not do a remote TLB flush on CPUs in lazy TLB mode because the
+CPU will flush itself at the next context switch. By comparison, the
+Hyper-V enlightened TLB flush does not exclude CPUs in lazy TLB mode
+and so performs unnecessary flushes.
+
+If we're not freeing page tables, add logic to test for lazy TLB
+mode when adding CPUs to the input argument to the Hyper-V TLB
+flush hypercall. Exclude lazy TLB mode CPUs so the behavior
+matches native_flush_tlb_multi() and the unnecessary flushes are
+avoided. Handle both the <=64 vCPU case and the _ex case for >64
+vCPUs.
+
+Signed-off-by: Michael Kelley <mikelley@microsoft.com>
+Link: https://lore.kernel.org/r/1679922967-26582-3-git-send-email-mikelley@microsoft.com
+Signed-off-by: Wei Liu <wei.liu@kernel.org>
+---
+ arch/x86/hyperv/mmu.c | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/arch/x86/hyperv/mmu.c b/arch/x86/hyperv/mmu.c
+index 0ad2378fe6ad7e..8460bd35e10c3d 100644
+--- a/arch/x86/hyperv/mmu.c
++++ b/arch/x86/hyperv/mmu.c
+@@ -52,6 +52,11 @@ static inline int fill_gva_list(u64 gva_list[], int offset,
+ 	return gva_n - offset;
+ }
+ 
++static bool cpu_is_lazy(int cpu)
++{
++	return per_cpu(cpu_tlbstate_shared.is_lazy, cpu);
++}
++
+ static void hyperv_flush_tlb_multi(const struct cpumask *cpus,
+ 				   const struct flush_tlb_info *info)
+ {
+@@ -60,6 +65,7 @@ static void hyperv_flush_tlb_multi(const struct cpumask *cpus,
+ 	struct hv_tlb_flush *flush;
+ 	u64 status;
+ 	unsigned long flags;
++	bool do_lazy = !info->freed_tables;
+ 
+ 	trace_hyperv_mmu_flush_tlb_multi(cpus, info);
+ 
+@@ -112,6 +118,8 @@ static void hyperv_flush_tlb_multi(const struct cpumask *cpus,
+ 			goto do_ex_hypercall;
+ 
+ 		for_each_cpu(cpu, cpus) {
++			if (do_lazy && cpu_is_lazy(cpu))
++				continue;
+ 			vcpu = hv_cpu_number_to_vp_number(cpu);
+ 			if (vcpu == VP_INVAL) {
+ 				local_irq_restore(flags);
+@@ -198,7 +206,8 @@ static u64 hyperv_flush_tlb_others_ex(const struct cpumask *cpus,
+ 	flush->hv_vp_set.valid_bank_mask = 0;
+ 
+ 	flush->hv_vp_set.format = HV_GENERIC_SET_SPARSE_4K;
+-	nr_bank = cpumask_to_vpset(&(flush->hv_vp_set), cpus);
++	nr_bank = cpumask_to_vpset_skip(&flush->hv_vp_set, cpus,
++			info->freed_tables ? NULL : cpu_is_lazy);
+ 	if (nr_bank < 0)
+ 		return HV_STATUS_INVALID_PARAMETER;
+ 
+
+From d21a19e1c2f55504c4b3e9f9c82b4554bfa90d7b Mon Sep 17 00:00:00 2001
+From: Saurabh Sengar <ssengar@linux.microsoft.com>
+Date: Mon, 10 Apr 2023 22:55:28 -0700
+Subject: [PATCH 16/22] x86/init: Make get/set_rtc_noop() public
+
+Make get/set_rtc_noop() to be public so that they can be used
+in other modules as well.
+
+Co-developed-by: Tianyu Lan <tiala@microsoft.com>
+Signed-off-by: Tianyu Lan <tiala@microsoft.com>
+Signed-off-by: Saurabh Sengar <ssengar@linux.microsoft.com>
+Reviewed-by: Wei Liu <wei.liu@kernel.org>
+Reviewed-by: Michael Kelley <mikelley@microsoft.com>
+Acked-by: Borislav Petkov (AMD) <bp@alien8.de>
+Link: https://lore.kernel.org/r/1681192532-15460-2-git-send-email-ssengar@linux.microsoft.com
+Signed-off-by: Wei Liu <wei.liu@kernel.org>
+---
+ arch/x86/include/asm/x86_init.h | 2 ++
+ arch/x86/kernel/x86_init.c      | 4 ++--
+ 2 files changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/arch/x86/include/asm/x86_init.h b/arch/x86/include/asm/x86_init.h
+index acc20ae4079d31..88085f369ff6fb 100644
+--- a/arch/x86/include/asm/x86_init.h
++++ b/arch/x86/include/asm/x86_init.h
+@@ -330,5 +330,7 @@ extern void x86_init_uint_noop(unsigned int unused);
+ extern bool bool_x86_init_noop(void);
+ extern void x86_op_int_noop(int cpu);
+ extern bool x86_pnpbios_disabled(void);
++extern int set_rtc_noop(const struct timespec64 *now);
++extern void get_rtc_noop(struct timespec64 *now);
+ 
+ #endif
+diff --git a/arch/x86/kernel/x86_init.c b/arch/x86/kernel/x86_init.c
+index ecdeb0974a8796..d82f4fa2f1bfe8 100644
+--- a/arch/x86/kernel/x86_init.c
++++ b/arch/x86/kernel/x86_init.c
+@@ -33,8 +33,8 @@ static int __init iommu_init_noop(void) { return 0; }
+ static void iommu_shutdown_noop(void) { }
+ bool __init bool_x86_init_noop(void) { return false; }
+ void x86_op_int_noop(int cpu) { }
+-static int set_rtc_noop(const struct timespec64 *now) { return -EINVAL; }
+-static void get_rtc_noop(struct timespec64 *now) { }
++int set_rtc_noop(const struct timespec64 *now) { return -EINVAL; }
++void get_rtc_noop(struct timespec64 *now) { }
+ 
+ static __initconst const struct of_device_id of_cmos_match[] = {
+ 	{ .compatible = "motorola,mc146818" },
+
+From c26e0527aaf84a34b4774d80c9a9baa65f4d77f2 Mon Sep 17 00:00:00 2001
+From: Saurabh Sengar <ssengar@linux.microsoft.com>
+Date: Mon, 10 Apr 2023 22:55:29 -0700
+Subject: [PATCH 17/22] x86/hyperv: Add VTL specific structs and hypercalls
+
+Add structs and hypercalls required to enable VTL support on x86.
+
+Signed-off-by: Saurabh Sengar <ssengar@linux.microsoft.com>
+Reviewed-by: Michael Kelley <mikelley@microsoft.com>
+Reviewed-by: Stanislav Kinsburskii <stanislav.kinsburskii@gmail.com>
+Link: https://lore.kernel.org/r/1681192532-15460-3-git-send-email-ssengar@linux.microsoft.com
+Signed-off-by: Wei Liu <wei.liu@kernel.org>
+---
+ arch/x86/include/asm/hyperv-tlfs.h | 75 ++++++++++++++++++++++++++++++
+ include/asm-generic/hyperv-tlfs.h  |  4 ++
+ 2 files changed, 79 insertions(+)
+
+diff --git a/arch/x86/include/asm/hyperv-tlfs.h b/arch/x86/include/asm/hyperv-tlfs.h
+index b4fb75bd101381..cea95dcd27c2e5 100644
+--- a/arch/x86/include/asm/hyperv-tlfs.h
++++ b/arch/x86/include/asm/hyperv-tlfs.h
+@@ -716,6 +716,81 @@ union hv_msi_entry {
+ 	} __packed;
+ };
+ 
++struct hv_x64_segment_register {
++	u64 base;
++	u32 limit;
++	u16 selector;
++	union {
++		struct {
++			u16 segment_type : 4;
++			u16 non_system_segment : 1;
++			u16 descriptor_privilege_level : 2;
++			u16 present : 1;
++			u16 reserved : 4;
++			u16 available : 1;
++			u16 _long : 1;
++			u16 _default : 1;
++			u16 granularity : 1;
++		} __packed;
++		u16 attributes;
++	};
++} __packed;
++
++struct hv_x64_table_register {
++	u16 pad[3];
++	u16 limit;
++	u64 base;
++} __packed;
++
++struct hv_init_vp_context {
++	u64 rip;
++	u64 rsp;
++	u64 rflags;
++
++	struct hv_x64_segment_register cs;
++	struct hv_x64_segment_register ds;
++	struct hv_x64_segment_register es;
++	struct hv_x64_segment_register fs;
++	struct hv_x64_segment_register gs;
++	struct hv_x64_segment_register ss;
++	struct hv_x64_segment_register tr;
++	struct hv_x64_segment_register ldtr;
++
++	struct hv_x64_table_register idtr;
++	struct hv_x64_table_register gdtr;
++
++	u64 efer;
++	u64 cr0;
++	u64 cr3;
++	u64 cr4;
++	u64 msr_cr_pat;
++} __packed;
++
++union hv_input_vtl {
++	u8 as_uint8;
++	struct {
++		u8 target_vtl: 4;
++		u8 use_target_vtl: 1;
++		u8 reserved_z: 3;
++	};
++} __packed;
++
++struct hv_enable_vp_vtl {
++	u64				partition_id;
++	u32				vp_index;
++	union hv_input_vtl		target_vtl;
++	u8				mbz0;
++	u16				mbz1;
++	struct hv_init_vp_context	vp_context;
++} __packed;
++
++struct hv_get_vp_from_apic_id_in {
++	u64 partition_id;
++	union hv_input_vtl target_vtl;
++	u8 res[7];
++	u32 apic_ids[];
++} __packed;
++
+ #include <asm-generic/hyperv-tlfs.h>
+ 
+ #endif
+diff --git a/include/asm-generic/hyperv-tlfs.h b/include/asm-generic/hyperv-tlfs.h
+index ea406e90146942..f4e4cc4f965f2a 100644
+--- a/include/asm-generic/hyperv-tlfs.h
++++ b/include/asm-generic/hyperv-tlfs.h
+@@ -146,6 +146,7 @@ union hv_reference_tsc_msr {
+ /* Declare the various hypercall operations. */
+ #define HVCALL_FLUSH_VIRTUAL_ADDRESS_SPACE	0x0002
+ #define HVCALL_FLUSH_VIRTUAL_ADDRESS_LIST	0x0003
++#define HVCALL_ENABLE_VP_VTL			0x000f
+ #define HVCALL_NOTIFY_LONG_SPIN_WAIT		0x0008
+ #define HVCALL_SEND_IPI				0x000b
+ #define HVCALL_FLUSH_VIRTUAL_ADDRESS_SPACE_EX	0x0013
+@@ -165,6 +166,8 @@ union hv_reference_tsc_msr {
+ #define HVCALL_MAP_DEVICE_INTERRUPT		0x007c
+ #define HVCALL_UNMAP_DEVICE_INTERRUPT		0x007d
+ #define HVCALL_RETARGET_INTERRUPT		0x007e
++#define HVCALL_START_VP				0x0099
++#define HVCALL_GET_VP_ID_FROM_APIC_ID		0x009a
+ #define HVCALL_FLUSH_GUEST_PHYSICAL_ADDRESS_SPACE 0x00af
+ #define HVCALL_FLUSH_GUEST_PHYSICAL_ADDRESS_LIST 0x00b0
+ #define HVCALL_MODIFY_SPARSE_GPA_PAGE_HOST_VISIBILITY 0x00db
+@@ -220,6 +223,7 @@ enum HV_GENERIC_SET_FORMAT {
+ #define HV_STATUS_INVALID_PORT_ID		17
+ #define HV_STATUS_INVALID_CONNECTION_ID		18
+ #define HV_STATUS_INSUFFICIENT_BUFFERS		19
++#define HV_STATUS_VTL_ALREADY_ENABLED		134
+ 
+ /*
+  * The Hyper-V TimeRefCount register and the TSC
+
+From 0a7a00580a4fad9a6cd28c2d825e0e5ae917e59e Mon Sep 17 00:00:00 2001
+From: Saurabh Sengar <ssengar@linux.microsoft.com>
+Date: Mon, 10 Apr 2023 22:55:30 -0700
+Subject: [PATCH 18/22] x86/hyperv: Make hv_get_nmi_reason public
+
+Move hv_get_nmi_reason to .h file so it can be used in other
+modules as well.
+
+Signed-off-by: Saurabh Sengar <ssengar@linux.microsoft.com>
+Reviewed-by: Michael Kelley <mikelley@microsoft.com>
+Link: https://lore.kernel.org/r/1681192532-15460-4-git-send-email-ssengar@linux.microsoft.com
+Signed-off-by: Wei Liu <wei.liu@kernel.org>
+---
+ arch/x86/include/asm/mshyperv.h | 5 +++++
+ arch/x86/kernel/cpu/mshyperv.c  | 5 -----
+ 2 files changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/arch/x86/include/asm/mshyperv.h b/arch/x86/include/asm/mshyperv.h
+index e3cef98a014201..67f8386c1775cf 100644
+--- a/arch/x86/include/asm/mshyperv.h
++++ b/arch/x86/include/asm/mshyperv.h
+@@ -29,6 +29,11 @@ typedef int (*hyperv_fill_flush_list_func)(
+ 
+ void hyperv_vector_handler(struct pt_regs *regs);
+ 
++static inline unsigned char hv_get_nmi_reason(void)
++{
++	return 0;
++}
++
+ #if IS_ENABLED(CONFIG_HYPERV)
+ extern int hyperv_init_cpuhp;
+ 
+diff --git a/arch/x86/kernel/cpu/mshyperv.c b/arch/x86/kernel/cpu/mshyperv.c
+index ac630ecde79545..c8a0e70cc484d8 100644
+--- a/arch/x86/kernel/cpu/mshyperv.c
++++ b/arch/x86/kernel/cpu/mshyperv.c
+@@ -248,11 +248,6 @@ static uint32_t  __init ms_hyperv_platform(void)
+ 	return HYPERV_CPUID_VENDOR_AND_MAX_FUNCTIONS;
+ }
+ 
+-static unsigned char hv_get_nmi_reason(void)
+-{
+-	return 0;
+-}
+-
+ #ifdef CONFIG_X86_LOCAL_APIC
+ /*
+  * Prior to WS2016 Debug-VM sends NMIs to all CPUs which makes
+
+From d01b9a9f2d0131e1e249177a70e6b80d146d16d2 Mon Sep 17 00:00:00 2001
+From: Saurabh Sengar <ssengar@linux.microsoft.com>
+Date: Mon, 10 Apr 2023 22:55:31 -0700
+Subject: [PATCH 19/22] Drivers: hv: Kconfig: Add HYPERV_VTL_MODE
+
+Add HYPERV_VTL_MODE Kconfig flag for VTL mode.
+
+Signed-off-by: Saurabh Sengar <ssengar@linux.microsoft.com>
+Reviewed-by: Michael Kelley <mikelley@microsoft.com>
+Link: https://lore.kernel.org/r/1681192532-15460-5-git-send-email-ssengar@linux.microsoft.com
+Signed-off-by: Wei Liu <wei.liu@kernel.org>
+---
+ drivers/hv/Kconfig | 24 ++++++++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/drivers/hv/Kconfig b/drivers/hv/Kconfig
+index 94982f08b66104..00242107d62e02 100644
+--- a/drivers/hv/Kconfig
++++ b/drivers/hv/Kconfig
+@@ -13,6 +13,30 @@ config HYPERV
+ 	  Select this option to run Linux as a Hyper-V client operating
+ 	  system.
+ 
++config HYPERV_VTL_MODE
++	bool "Enable Linux to boot in VTL context"
++	depends on X86_64 && HYPERV
++	default n
++	help
++	  Virtual Secure Mode (VSM) is a set of hypervisor capabilities and
++	  enlightenments offered to host and guest partitions which enables
++	  the creation and management of new security boundaries within
++	  operating system software.
++
++	  VSM achieves and maintains isolation through Virtual Trust Levels
++	  (VTLs). Virtual Trust Levels are hierarchical, with higher levels
++	  being more privileged than lower levels. VTL0 is the least privileged
++	  level, and currently only other level supported is VTL2.
++
++	  Select this option to build a Linux kernel to run at a VTL other than
++	  the normal VTL0, which currently is only VTL2.  This option
++	  initializes the x86 platform for VTL2, and adds the ability to boot
++	  secondary CPUs directly into 64-bit context as required for VTLs other
++	  than 0.  A kernel built with this option must run at VTL2, and will
++	  not run as a normal guest.
++
++	  If unsure, say N
++
+ config HYPERV_TIMER
+ 	def_bool HYPERV && X86
+ 
+
+From 3be1bc2fe9d2e4fc1375efa2567d2f58cd2a2a7c Mon Sep 17 00:00:00 2001
+From: Saurabh Sengar <ssengar@linux.microsoft.com>
+Date: Mon, 10 Apr 2023 22:55:32 -0700
+Subject: [PATCH 20/22] x86/hyperv: VTL support for Hyper-V
+
+Virtual Trust Levels (VTL) helps enable Hyper-V Virtual Secure Mode (VSM)
+feature. VSM is a set of hypervisor capabilities and enlightenments
+offered to host and guest partitions which enable the creation and
+management of new security boundaries within operating system software.
+VSM achieves and maintains isolation through VTLs.
+
+Add early initialization for Virtual Trust Levels (VTL). This includes
+initializing the x86 platform for VTL and enabling boot support for
+secondary CPUs to start in targeted VTL context. For now, only enable
+the code for targeted VTL level as 2.
+
+When starting an AP at a VTL other than VTL0, the AP must start directly
+in 64-bit mode, bypassing the usual 16-bit -> 32-bit -> 64-bit mode
+transition sequence that occurs after waking up an AP with SIPI whose
+vector points to the 16-bit AP startup trampoline code.
+
+Signed-off-by: Saurabh Sengar <ssengar@linux.microsoft.com>
+Reviewed-by: Michael Kelley <mikelley@microsoft.com>
+Reviewed-by: Stanislav Kinsburskii <stanislav.kinsburskii@gmail.com>
+Link: https://lore.kernel.org/r/1681192532-15460-6-git-send-email-ssengar@linux.microsoft.com
+Signed-off-by: Wei Liu <wei.liu@kernel.org>
+---
+ arch/x86/hyperv/Makefile        |   1 +
+ arch/x86/hyperv/hv_vtl.c        | 227 ++++++++++++++++++++++++++++++++
+ arch/x86/include/asm/mshyperv.h |  10 ++
+ arch/x86/kernel/cpu/mshyperv.c  |   1 +
+ 4 files changed, 239 insertions(+)
+ create mode 100644 arch/x86/hyperv/hv_vtl.c
+
+diff --git a/arch/x86/hyperv/Makefile b/arch/x86/hyperv/Makefile
+index 5d2de10809ae2c..3a1548054b4835 100644
+--- a/arch/x86/hyperv/Makefile
++++ b/arch/x86/hyperv/Makefile
+@@ -1,6 +1,7 @@
+ # SPDX-License-Identifier: GPL-2.0-only
+ obj-y			:= hv_init.o mmu.o nested.o irqdomain.o ivm.o
+ obj-$(CONFIG_X86_64)	+= hv_apic.o hv_proc.o
++obj-$(CONFIG_HYPERV_VTL_MODE)	+= hv_vtl.o
+ 
+ ifdef CONFIG_X86_64
+ obj-$(CONFIG_PARAVIRT_SPINLOCKS)	+= hv_spinlock.o
+diff --git a/arch/x86/hyperv/hv_vtl.c b/arch/x86/hyperv/hv_vtl.c
+new file mode 100644
+index 00000000000000..1ba5d3b99b1630
+--- /dev/null
++++ b/arch/x86/hyperv/hv_vtl.c
+@@ -0,0 +1,227 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Copyright (c) 2023, Microsoft Corporation.
++ *
++ * Author:
++ *   Saurabh Sengar <ssengar@microsoft.com>
++ */
++
++#include <asm/apic.h>
++#include <asm/boot.h>
++#include <asm/desc.h>
++#include <asm/i8259.h>
++#include <asm/mshyperv.h>
++#include <asm/realmode.h>
++
++extern struct boot_params boot_params;
++static struct real_mode_header hv_vtl_real_mode_header;
++
++void __init hv_vtl_init_platform(void)
++{
++	pr_info("Linux runs in Hyper-V Virtual Trust Level\n");
++
++	x86_init.irqs.pre_vector_init = x86_init_noop;
++	x86_init.timers.timer_init = x86_init_noop;
++
++	x86_platform.get_wallclock = get_rtc_noop;
++	x86_platform.set_wallclock = set_rtc_noop;
++	x86_platform.get_nmi_reason = hv_get_nmi_reason;
++
++	x86_platform.legacy.i8042 = X86_LEGACY_I8042_PLATFORM_ABSENT;
++	x86_platform.legacy.rtc = 0;
++	x86_platform.legacy.warm_reset = 0;
++	x86_platform.legacy.reserve_bios_regions = 0;
++	x86_platform.legacy.devices.pnpbios = 0;
++}
++
++static inline u64 hv_vtl_system_desc_base(struct ldttss_desc *desc)
++{
++	return ((u64)desc->base3 << 32) | ((u64)desc->base2 << 24) |
++		(desc->base1 << 16) | desc->base0;
++}
++
++static inline u32 hv_vtl_system_desc_limit(struct ldttss_desc *desc)
++{
++	return ((u32)desc->limit1 << 16) | (u32)desc->limit0;
++}
++
++typedef void (*secondary_startup_64_fn)(void*, void*);
++static void hv_vtl_ap_entry(void)
++{
++	((secondary_startup_64_fn)secondary_startup_64)(&boot_params, &boot_params);
++}
++
++static int hv_vtl_bringup_vcpu(u32 target_vp_index, u64 eip_ignored)
++{
++	u64 status;
++	int ret = 0;
++	struct hv_enable_vp_vtl *input;
++	unsigned long irq_flags;
++
++	struct desc_ptr gdt_ptr;
++	struct desc_ptr idt_ptr;
++
++	struct ldttss_desc *tss;
++	struct ldttss_desc *ldt;
++	struct desc_struct *gdt;
++
++	u64 rsp = current->thread.sp;
++	u64 rip = (u64)&hv_vtl_ap_entry;
++
++	native_store_gdt(&gdt_ptr);
++	store_idt(&idt_ptr);
++
++	gdt = (struct desc_struct *)((void *)(gdt_ptr.address));
++	tss = (struct ldttss_desc *)(gdt + GDT_ENTRY_TSS);
++	ldt = (struct ldttss_desc *)(gdt + GDT_ENTRY_LDT);
++
++	local_irq_save(irq_flags);
++
++	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
++	memset(input, 0, sizeof(*input));
++
++	input->partition_id = HV_PARTITION_ID_SELF;
++	input->vp_index = target_vp_index;
++	input->target_vtl.target_vtl = HV_VTL_MGMT;
++
++	/*
++	 * The x86_64 Linux kernel follows the 16-bit -> 32-bit -> 64-bit
++	 * mode transition sequence after waking up an AP with SIPI whose
++	 * vector points to the 16-bit AP startup trampoline code. Here in
++	 * VTL2, we can't perform that sequence as the AP has to start in
++	 * the 64-bit mode.
++	 *
++	 * To make this happen, we tell the hypervisor to load a valid 64-bit
++	 * context (most of which is just magic numbers from the CPU manual)
++	 * so that AP jumps right to the 64-bit entry of the kernel, and the
++	 * control registers are loaded with values that let the AP fetch the
++	 * code and data and carry on with work it gets assigned.
++	 */
++
++	input->vp_context.rip = rip;
++	input->vp_context.rsp = rsp;
++	input->vp_context.rflags = 0x0000000000000002;
++	input->vp_context.efer = __rdmsr(MSR_EFER);
++	input->vp_context.cr0 = native_read_cr0();
++	input->vp_context.cr3 = __native_read_cr3();
++	input->vp_context.cr4 = native_read_cr4();
++	input->vp_context.msr_cr_pat = __rdmsr(MSR_IA32_CR_PAT);
++	input->vp_context.idtr.limit = idt_ptr.size;
++	input->vp_context.idtr.base = idt_ptr.address;
++	input->vp_context.gdtr.limit = gdt_ptr.size;
++	input->vp_context.gdtr.base = gdt_ptr.address;
++
++	/* Non-system desc (64bit), long, code, present */
++	input->vp_context.cs.selector = __KERNEL_CS;
++	input->vp_context.cs.base = 0;
++	input->vp_context.cs.limit = 0xffffffff;
++	input->vp_context.cs.attributes = 0xa09b;
++	/* Non-system desc (64bit), data, present, granularity, default */
++	input->vp_context.ss.selector = __KERNEL_DS;
++	input->vp_context.ss.base = 0;
++	input->vp_context.ss.limit = 0xffffffff;
++	input->vp_context.ss.attributes = 0xc093;
++
++	/* System desc (128bit), present, LDT */
++	input->vp_context.ldtr.selector = GDT_ENTRY_LDT * 8;
++	input->vp_context.ldtr.base = hv_vtl_system_desc_base(ldt);
++	input->vp_context.ldtr.limit = hv_vtl_system_desc_limit(ldt);
++	input->vp_context.ldtr.attributes = 0x82;
++
++	/* System desc (128bit), present, TSS, 0x8b - busy, 0x89 -- default */
++	input->vp_context.tr.selector = GDT_ENTRY_TSS * 8;
++	input->vp_context.tr.base = hv_vtl_system_desc_base(tss);
++	input->vp_context.tr.limit = hv_vtl_system_desc_limit(tss);
++	input->vp_context.tr.attributes = 0x8b;
++
++	status = hv_do_hypercall(HVCALL_ENABLE_VP_VTL, input, NULL);
++
++	if (!hv_result_success(status) &&
++	    hv_result(status) != HV_STATUS_VTL_ALREADY_ENABLED) {
++		pr_err("HVCALL_ENABLE_VP_VTL failed for VP : %d ! [Err: %#llx\n]",
++		       target_vp_index, status);
++		ret = -EINVAL;
++		goto free_lock;
++	}
++
++	status = hv_do_hypercall(HVCALL_START_VP, input, NULL);
++
++	if (!hv_result_success(status)) {
++		pr_err("HVCALL_START_VP failed for VP : %d ! [Err: %#llx]\n",
++		       target_vp_index, status);
++		ret = -EINVAL;
++	}
++
++free_lock:
++	local_irq_restore(irq_flags);
++
++	return ret;
++}
++
++static int hv_vtl_apicid_to_vp_id(u32 apic_id)
++{
++	u64 control;
++	u64 status;
++	unsigned long irq_flags;
++	struct hv_get_vp_from_apic_id_in *input;
++	u32 *output, ret;
++
++	local_irq_save(irq_flags);
++
++	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
++	memset(input, 0, sizeof(*input));
++	input->partition_id = HV_PARTITION_ID_SELF;
++	input->apic_ids[0] = apic_id;
++
++	output = (u32 *)input;
++
++	control = HV_HYPERCALL_REP_COMP_1 | HVCALL_GET_VP_ID_FROM_APIC_ID;
++	status = hv_do_hypercall(control, input, output);
++	ret = output[0];
++
++	local_irq_restore(irq_flags);
++
++	if (!hv_result_success(status)) {
++		pr_err("failed to get vp id from apic id %d, status %#llx\n",
++		       apic_id, status);
++		return -EINVAL;
++	}
++
++	return ret;
++}
++
++static int hv_vtl_wakeup_secondary_cpu(int apicid, unsigned long start_eip)
++{
++	int vp_id;
++
++	pr_debug("Bringing up CPU with APIC ID %d in VTL2...\n", apicid);
++	vp_id = hv_vtl_apicid_to_vp_id(apicid);
++
++	if (vp_id < 0) {
++		pr_err("Couldn't find CPU with APIC ID %d\n", apicid);
++		return -EINVAL;
++	}
++	if (vp_id > ms_hyperv.max_vp_index) {
++		pr_err("Invalid CPU id %d for APIC ID %d\n", vp_id, apicid);
++		return -EINVAL;
++	}
++
++	return hv_vtl_bringup_vcpu(vp_id, start_eip);
++}
++
++static int __init hv_vtl_early_init(void)
++{
++	/*
++	 * `boot_cpu_has` returns the runtime feature support,
++	 * and here is the earliest it can be used.
++	 */
++	if (cpu_feature_enabled(X86_FEATURE_XSAVE))
++		panic("XSAVE has to be disabled as it is not supported by this module.\n"
++			  "Please add 'noxsave' to the kernel command line.\n");
++
++	real_mode_header = &hv_vtl_real_mode_header;
++	apic->wakeup_secondary_cpu_64 = hv_vtl_wakeup_secondary_cpu;
++
++	return 0;
++}
++early_initcall(hv_vtl_early_init);
+diff --git a/arch/x86/include/asm/mshyperv.h b/arch/x86/include/asm/mshyperv.h
+index 67f8386c1775cf..b445e252aa83f9 100644
+--- a/arch/x86/include/asm/mshyperv.h
++++ b/arch/x86/include/asm/mshyperv.h
+@@ -19,6 +19,10 @@
+  */
+ #define HV_IOAPIC_BASE_ADDRESS 0xfec00000
+ 
++#define HV_VTL_NORMAL 0x0
++#define HV_VTL_SECURE 0x1
++#define HV_VTL_MGMT   0x2
++
+ union hv_ghcb;
+ 
+ DECLARE_STATIC_KEY_FALSE(isolation_type_snp);
+@@ -276,6 +280,12 @@ static inline u64 hv_get_non_nested_register(unsigned int reg) { return 0; }
+ #endif /* CONFIG_HYPERV */
+ 
+ 
++#ifdef CONFIG_HYPERV_VTL_MODE
++void __init hv_vtl_init_platform(void);
++#else
++static inline void __init hv_vtl_init_platform(void) {}
++#endif
++
+ #include <asm-generic/mshyperv.h>
+ 
+ #endif
+diff --git a/arch/x86/kernel/cpu/mshyperv.c b/arch/x86/kernel/cpu/mshyperv.c
+index c8a0e70cc484d8..c7969e806c64bc 100644
+--- a/arch/x86/kernel/cpu/mshyperv.c
++++ b/arch/x86/kernel/cpu/mshyperv.c
+@@ -514,6 +514,7 @@ static void __init ms_hyperv_init_platform(void)
+ 
+ 	/* Register Hyper-V specific clocksource */
+ 	hv_init_clocksource();
++	hv_vtl_init_platform();
+ #endif
+ 	/*
+ 	 * TSC should be marked as unstable only after Hyper-V
+
+From 9c318a1d9b5000c77527011f158a75c5483510f5 Mon Sep 17 00:00:00 2001
+From: Long Li <longli@microsoft.com>
+Date: Thu, 20 Apr 2023 15:49:06 -0700
+Subject: [PATCH 21/22] Drivers: hv: move panic report code from vmbus to hv
+ early init code
+
+The panic reporting code was added in commit 81b18bce48af
+("Drivers: HV: Send one page worth of kmsg dump over Hyper-V during panic")
+
+It was added to the vmbus driver. The panic reporting has no dependence
+on vmbus, and can be enabled at an earlier boot time when Hyper-V is
+initialized.
+
+This patch moves the panic reporting code out of vmbus. There is no
+functionality changes. During moving, also refactored some cleanup
+functions into hv_kmsg_dump_unregister().
+
+Signed-off-by: Long Li <longli@microsoft.com>
+Reviewed-by: Michael Kelley <mikelley@microsoft.com>
+Link: https://lore.kernel.org/r/1682030946-6372-1-git-send-email-longli@linuxonhyperv.com
+Signed-off-by: Wei Liu <wei.liu@kernel.org>
+---
+ drivers/hv/hv.c        |  36 -------
+ drivers/hv/hv_common.c | 231 +++++++++++++++++++++++++++++++++++++++++
+ drivers/hv/vmbus_drv.c | 199 -----------------------------------
+ 3 files changed, 231 insertions(+), 235 deletions(-)
+
+diff --git a/drivers/hv/hv.c b/drivers/hv/hv.c
+index 4e1407d59ba0fb..de6708dbe0df48 100644
+--- a/drivers/hv/hv.c
++++ b/drivers/hv/hv.c
+@@ -38,42 +38,6 @@ int hv_init(void)
+ 	return 0;
+ }
+ 
+-/*
+- * Functions for allocating and freeing memory with size and
+- * alignment HV_HYP_PAGE_SIZE. These functions are needed because
+- * the guest page size may not be the same as the Hyper-V page
+- * size. We depend upon kmalloc() aligning power-of-two size
+- * allocations to the allocation size boundary, so that the
+- * allocated memory appears to Hyper-V as a page of the size
+- * it expects.
+- */
+-
+-void *hv_alloc_hyperv_page(void)
+-{
+-	BUILD_BUG_ON(PAGE_SIZE <  HV_HYP_PAGE_SIZE);
+-
+-	if (PAGE_SIZE == HV_HYP_PAGE_SIZE)
+-		return (void *)__get_free_page(GFP_KERNEL);
+-	else
+-		return kmalloc(HV_HYP_PAGE_SIZE, GFP_KERNEL);
+-}
+-
+-void *hv_alloc_hyperv_zeroed_page(void)
+-{
+-	if (PAGE_SIZE == HV_HYP_PAGE_SIZE)
+-		return (void *)__get_free_page(GFP_KERNEL | __GFP_ZERO);
+-	else
+-		return kzalloc(HV_HYP_PAGE_SIZE, GFP_KERNEL);
+-}
+-
+-void hv_free_hyperv_page(unsigned long addr)
+-{
+-	if (PAGE_SIZE == HV_HYP_PAGE_SIZE)
+-		free_page(addr);
+-	else
+-		kfree((void *)addr);
+-}
+-
+ /*
+  * hv_post_message - Post a message using the hypervisor message IPC.
+  *
+diff --git a/drivers/hv/hv_common.c b/drivers/hv/hv_common.c
+index 6d40b6c7b23b90..64f9ceca887b9e 100644
+--- a/drivers/hv/hv_common.c
++++ b/drivers/hv/hv_common.c
+@@ -17,8 +17,11 @@
+ #include <linux/export.h>
+ #include <linux/bitfield.h>
+ #include <linux/cpumask.h>
++#include <linux/sched/task_stack.h>
+ #include <linux/panic_notifier.h>
+ #include <linux/ptrace.h>
++#include <linux/kdebug.h>
++#include <linux/kmsg_dump.h>
+ #include <linux/slab.h>
+ #include <linux/dma-map-ops.h>
+ #include <asm/hyperv-tlfs.h>
+@@ -54,6 +57,10 @@ EXPORT_SYMBOL_GPL(hyperv_pcpu_input_arg);
+ void * __percpu *hyperv_pcpu_output_arg;
+ EXPORT_SYMBOL_GPL(hyperv_pcpu_output_arg);
+ 
++static void hv_kmsg_dump_unregister(void);
++
++static struct ctl_table_header *hv_ctl_table_hdr;
++
+ /*
+  * Hyper-V specific initialization and shutdown code that is
+  * common across all architectures.  Called from architecture
+@@ -62,6 +69,12 @@ EXPORT_SYMBOL_GPL(hyperv_pcpu_output_arg);
+ 
+ void __init hv_common_free(void)
+ {
++	unregister_sysctl_table(hv_ctl_table_hdr);
++	hv_ctl_table_hdr = NULL;
++
++	if (ms_hyperv.misc_features & HV_FEATURE_GUEST_CRASH_MSR_AVAILABLE)
++		hv_kmsg_dump_unregister();
++
+ 	kfree(hv_vp_index);
+ 	hv_vp_index = NULL;
+ 
+@@ -72,10 +85,203 @@ void __init hv_common_free(void)
+ 	hyperv_pcpu_input_arg = NULL;
+ }
+ 
++/*
++ * Functions for allocating and freeing memory with size and
++ * alignment HV_HYP_PAGE_SIZE. These functions are needed because
++ * the guest page size may not be the same as the Hyper-V page
++ * size. We depend upon kmalloc() aligning power-of-two size
++ * allocations to the allocation size boundary, so that the
++ * allocated memory appears to Hyper-V as a page of the size
++ * it expects.
++ */
++
++void *hv_alloc_hyperv_page(void)
++{
++	BUILD_BUG_ON(PAGE_SIZE <  HV_HYP_PAGE_SIZE);
++
++	if (PAGE_SIZE == HV_HYP_PAGE_SIZE)
++		return (void *)__get_free_page(GFP_KERNEL);
++	else
++		return kmalloc(HV_HYP_PAGE_SIZE, GFP_KERNEL);
++}
++EXPORT_SYMBOL_GPL(hv_alloc_hyperv_page);
++
++void *hv_alloc_hyperv_zeroed_page(void)
++{
++	if (PAGE_SIZE == HV_HYP_PAGE_SIZE)
++		return (void *)__get_free_page(GFP_KERNEL | __GFP_ZERO);
++	else
++		return kzalloc(HV_HYP_PAGE_SIZE, GFP_KERNEL);
++}
++EXPORT_SYMBOL_GPL(hv_alloc_hyperv_zeroed_page);
++
++void hv_free_hyperv_page(unsigned long addr)
++{
++	if (PAGE_SIZE == HV_HYP_PAGE_SIZE)
++		free_page(addr);
++	else
++		kfree((void *)addr);
++}
++EXPORT_SYMBOL_GPL(hv_free_hyperv_page);
++
++static void *hv_panic_page;
++
++/*
++ * Boolean to control whether to report panic messages over Hyper-V.
++ *
++ * It can be set via /proc/sys/kernel/hyperv_record_panic_msg
++ */
++static int sysctl_record_panic_msg = 1;
++
++/*
++ * sysctl option to allow the user to control whether kmsg data should be
++ * reported to Hyper-V on panic.
++ */
++static struct ctl_table hv_ctl_table[] = {
++	{
++		.procname	= "hyperv_record_panic_msg",
++		.data		= &sysctl_record_panic_msg,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= proc_dointvec_minmax,
++		.extra1		= SYSCTL_ZERO,
++		.extra2		= SYSCTL_ONE
++	},
++	{}
++};
++
++static int hv_die_panic_notify_crash(struct notifier_block *self,
++				     unsigned long val, void *args);
++
++static struct notifier_block hyperv_die_report_block = {
++	.notifier_call = hv_die_panic_notify_crash,
++};
++
++static struct notifier_block hyperv_panic_report_block = {
++	.notifier_call = hv_die_panic_notify_crash,
++};
++
++/*
++ * The following callback works both as die and panic notifier; its
++ * goal is to provide panic information to the hypervisor unless the
++ * kmsg dumper is used [see hv_kmsg_dump()], which provides more
++ * information but isn't always available.
++ *
++ * Notice that both the panic/die report notifiers are registered only
++ * if we have the capability HV_FEATURE_GUEST_CRASH_MSR_AVAILABLE set.
++ */
++static int hv_die_panic_notify_crash(struct notifier_block *self,
++				     unsigned long val, void *args)
++{
++	struct pt_regs *regs;
++	bool is_die;
++
++	/* Don't notify Hyper-V unless we have a die oops event or panic. */
++	if (self == &hyperv_panic_report_block) {
++		is_die = false;
++		regs = current_pt_regs();
++	} else { /* die event */
++		if (val != DIE_OOPS)
++			return NOTIFY_DONE;
++
++		is_die = true;
++		regs = ((struct die_args *)args)->regs;
++	}
++
++	/*
++	 * Hyper-V should be notified only once about a panic/die. If we will
++	 * be calling hv_kmsg_dump() later with kmsg data, don't do the
++	 * notification here.
++	 */
++	if (!sysctl_record_panic_msg || !hv_panic_page)
++		hyperv_report_panic(regs, val, is_die);
++
++	return NOTIFY_DONE;
++}
++
++/*
++ * Callback from kmsg_dump. Grab as much as possible from the end of the kmsg
++ * buffer and call into Hyper-V to transfer the data.
++ */
++static void hv_kmsg_dump(struct kmsg_dumper *dumper,
++			 enum kmsg_dump_reason reason)
++{
++	struct kmsg_dump_iter iter;
++	size_t bytes_written;
++
++	/* We are only interested in panics. */
++	if (reason != KMSG_DUMP_PANIC || !sysctl_record_panic_msg)
++		return;
++
++	/*
++	 * Write dump contents to the page. No need to synchronize; panic should
++	 * be single-threaded.
++	 */
++	kmsg_dump_rewind(&iter);
++	kmsg_dump_get_buffer(&iter, false, hv_panic_page, HV_HYP_PAGE_SIZE,
++			     &bytes_written);
++	if (!bytes_written)
++		return;
++	/*
++	 * P3 to contain the physical address of the panic page & P4 to
++	 * contain the size of the panic data in that page. Rest of the
++	 * registers are no-op when the NOTIFY_MSG flag is set.
++	 */
++	hv_set_register(HV_REGISTER_CRASH_P0, 0);
++	hv_set_register(HV_REGISTER_CRASH_P1, 0);
++	hv_set_register(HV_REGISTER_CRASH_P2, 0);
++	hv_set_register(HV_REGISTER_CRASH_P3, virt_to_phys(hv_panic_page));
++	hv_set_register(HV_REGISTER_CRASH_P4, bytes_written);
++
++	/*
++	 * Let Hyper-V know there is crash data available along with
++	 * the panic message.
++	 */
++	hv_set_register(HV_REGISTER_CRASH_CTL,
++			(HV_CRASH_CTL_CRASH_NOTIFY |
++			 HV_CRASH_CTL_CRASH_NOTIFY_MSG));
++}
++
++static struct kmsg_dumper hv_kmsg_dumper = {
++	.dump = hv_kmsg_dump,
++};
++
++static void hv_kmsg_dump_unregister(void)
++{
++	kmsg_dump_unregister(&hv_kmsg_dumper);
++	unregister_die_notifier(&hyperv_die_report_block);
++	atomic_notifier_chain_unregister(&panic_notifier_list,
++					 &hyperv_panic_report_block);
++
++	hv_free_hyperv_page((unsigned long)hv_panic_page);
++	hv_panic_page = NULL;
++}
++
++static void hv_kmsg_dump_register(void)
++{
++	int ret;
++
++	hv_panic_page = hv_alloc_hyperv_zeroed_page();
++	if (!hv_panic_page) {
++		pr_err("Hyper-V: panic message page memory allocation failed\n");
++		return;
++	}
++
++	ret = kmsg_dump_register(&hv_kmsg_dumper);
++	if (ret) {
++		pr_err("Hyper-V: kmsg dump register error 0x%x\n", ret);
++		hv_free_hyperv_page((unsigned long)hv_panic_page);
++		hv_panic_page = NULL;
++	}
++}
++
+ int __init hv_common_init(void)
+ {
+ 	int i;
+ 
++	if (hv_is_isolation_supported())
++		sysctl_record_panic_msg = 0;
++
+ 	/*
+ 	 * Hyper-V expects to get crash register data or kmsg when
+ 	 * crash enlightment is available and system crashes. Set
+@@ -84,8 +290,33 @@ int __init hv_common_init(void)
+ 	 * kernel.
+ 	 */
+ 	if (ms_hyperv.misc_features & HV_FEATURE_GUEST_CRASH_MSR_AVAILABLE) {
++		u64 hyperv_crash_ctl;
++
+ 		crash_kexec_post_notifiers = true;
+ 		pr_info("Hyper-V: enabling crash_kexec_post_notifiers\n");
++
++		/*
++		 * Panic message recording (sysctl_record_panic_msg)
++		 * is enabled by default in non-isolated guests and
++		 * disabled by default in isolated guests; the panic
++		 * message recording won't be available in isolated
++		 * guests should the following registration fail.
++		 */
++		hv_ctl_table_hdr = register_sysctl("kernel", hv_ctl_table);
++		if (!hv_ctl_table_hdr)
++			pr_err("Hyper-V: sysctl table register error");
++
++		/*
++		 * Register for panic kmsg callback only if the right
++		 * capability is supported by the hypervisor.
++		 */
++		hyperv_crash_ctl = hv_get_register(HV_REGISTER_CRASH_CTL);
++		if (hyperv_crash_ctl & HV_CRASH_CTL_CRASH_NOTIFY_MSG)
++			hv_kmsg_dump_register();
++
++		register_die_notifier(&hyperv_die_report_block);
++		atomic_notifier_chain_register(&panic_notifier_list,
++					       &hyperv_panic_report_block);
+ 	}
+ 
+ 	/*
+diff --git a/drivers/hv/vmbus_drv.c b/drivers/hv/vmbus_drv.c
+index 19a0069dc4a962..309c78ce1d30e7 100644
+--- a/drivers/hv/vmbus_drv.c
++++ b/drivers/hv/vmbus_drv.c
+@@ -30,7 +30,6 @@
+ #include <linux/panic_notifier.h>
+ #include <linux/ptrace.h>
+ #include <linux/screen_info.h>
+-#include <linux/kdebug.h>
+ #include <linux/efi.h>
+ #include <linux/random.h>
+ #include <linux/kernel.h>
+@@ -50,26 +49,12 @@ static struct device  *hv_dev;
+ 
+ static int hyperv_cpuhp_online;
+ 
+-static void *hv_panic_page;
+-
+ static long __percpu *vmbus_evt;
+ 
+ /* Values parsed from ACPI DSDT */
+ int vmbus_irq;
+ int vmbus_interrupt;
+ 
+-/*
+- * Boolean to control whether to report panic messages over Hyper-V.
+- *
+- * It can be set via /proc/sys/kernel/hyperv_record_panic_msg
+- */
+-static int sysctl_record_panic_msg = 1;
+-
+-static int hyperv_report_reg(void)
+-{
+-	return !sysctl_record_panic_msg || !hv_panic_page;
+-}
+-
+ /*
+  * The panic notifier below is responsible solely for unloading the
+  * vmbus connection, which is necessary in a panic event.
+@@ -90,54 +75,6 @@ static struct notifier_block hyperv_panic_vmbus_unload_block = {
+ 	.priority	= INT_MIN + 1, /* almost the latest one to execute */
+ };
+ 
+-static int hv_die_panic_notify_crash(struct notifier_block *self,
+-				     unsigned long val, void *args);
+-
+-static struct notifier_block hyperv_die_report_block = {
+-	.notifier_call = hv_die_panic_notify_crash,
+-};
+-static struct notifier_block hyperv_panic_report_block = {
+-	.notifier_call = hv_die_panic_notify_crash,
+-};
+-
+-/*
+- * The following callback works both as die and panic notifier; its
+- * goal is to provide panic information to the hypervisor unless the
+- * kmsg dumper is used [see hv_kmsg_dump()], which provides more
+- * information but isn't always available.
+- *
+- * Notice that both the panic/die report notifiers are registered only
+- * if we have the capability HV_FEATURE_GUEST_CRASH_MSR_AVAILABLE set.
+- */
+-static int hv_die_panic_notify_crash(struct notifier_block *self,
+-				     unsigned long val, void *args)
+-{
+-	struct pt_regs *regs;
+-	bool is_die;
+-
+-	/* Don't notify Hyper-V unless we have a die oops event or panic. */
+-	if (self == &hyperv_panic_report_block) {
+-		is_die = false;
+-		regs = current_pt_regs();
+-	} else { /* die event */
+-		if (val != DIE_OOPS)
+-			return NOTIFY_DONE;
+-
+-		is_die = true;
+-		regs = ((struct die_args *)args)->regs;
+-	}
+-
+-	/*
+-	 * Hyper-V should be notified only once about a panic/die. If we will
+-	 * be calling hv_kmsg_dump() later with kmsg data, don't do the
+-	 * notification here.
+-	 */
+-	if (hyperv_report_reg())
+-		hyperv_report_panic(regs, val, is_die);
+-
+-	return NOTIFY_DONE;
+-}
+-
+ static const char *fb_mmio_name = "fb_range";
+ static struct resource *fb_mmio;
+ static struct resource *hyperv_mmio;
+@@ -1379,98 +1316,6 @@ static irqreturn_t vmbus_percpu_isr(int irq, void *dev_id)
+ 	return IRQ_HANDLED;
+ }
+ 
+-/*
+- * Callback from kmsg_dump. Grab as much as possible from the end of the kmsg
+- * buffer and call into Hyper-V to transfer the data.
+- */
+-static void hv_kmsg_dump(struct kmsg_dumper *dumper,
+-			 enum kmsg_dump_reason reason)
+-{
+-	struct kmsg_dump_iter iter;
+-	size_t bytes_written;
+-
+-	/* We are only interested in panics. */
+-	if ((reason != KMSG_DUMP_PANIC) || (!sysctl_record_panic_msg))
+-		return;
+-
+-	/*
+-	 * Write dump contents to the page. No need to synchronize; panic should
+-	 * be single-threaded.
+-	 */
+-	kmsg_dump_rewind(&iter);
+-	kmsg_dump_get_buffer(&iter, false, hv_panic_page, HV_HYP_PAGE_SIZE,
+-			     &bytes_written);
+-	if (!bytes_written)
+-		return;
+-	/*
+-	 * P3 to contain the physical address of the panic page & P4 to
+-	 * contain the size of the panic data in that page. Rest of the
+-	 * registers are no-op when the NOTIFY_MSG flag is set.
+-	 */
+-	hv_set_register(HV_REGISTER_CRASH_P0, 0);
+-	hv_set_register(HV_REGISTER_CRASH_P1, 0);
+-	hv_set_register(HV_REGISTER_CRASH_P2, 0);
+-	hv_set_register(HV_REGISTER_CRASH_P3, virt_to_phys(hv_panic_page));
+-	hv_set_register(HV_REGISTER_CRASH_P4, bytes_written);
+-
+-	/*
+-	 * Let Hyper-V know there is crash data available along with
+-	 * the panic message.
+-	 */
+-	hv_set_register(HV_REGISTER_CRASH_CTL,
+-	       (HV_CRASH_CTL_CRASH_NOTIFY | HV_CRASH_CTL_CRASH_NOTIFY_MSG));
+-}
+-
+-static struct kmsg_dumper hv_kmsg_dumper = {
+-	.dump = hv_kmsg_dump,
+-};
+-
+-static void hv_kmsg_dump_register(void)
+-{
+-	int ret;
+-
+-	hv_panic_page = hv_alloc_hyperv_zeroed_page();
+-	if (!hv_panic_page) {
+-		pr_err("Hyper-V: panic message page memory allocation failed\n");
+-		return;
+-	}
+-
+-	ret = kmsg_dump_register(&hv_kmsg_dumper);
+-	if (ret) {
+-		pr_err("Hyper-V: kmsg dump register error 0x%x\n", ret);
+-		hv_free_hyperv_page((unsigned long)hv_panic_page);
+-		hv_panic_page = NULL;
+-	}
+-}
+-
+-static struct ctl_table_header *hv_ctl_table_hdr;
+-
+-/*
+- * sysctl option to allow the user to control whether kmsg data should be
+- * reported to Hyper-V on panic.
+- */
+-static struct ctl_table hv_ctl_table[] = {
+-	{
+-		.procname       = "hyperv_record_panic_msg",
+-		.data           = &sysctl_record_panic_msg,
+-		.maxlen         = sizeof(int),
+-		.mode           = 0644,
+-		.proc_handler   = proc_dointvec_minmax,
+-		.extra1		= SYSCTL_ZERO,
+-		.extra2		= SYSCTL_ONE
+-	},
+-	{}
+-};
+-
+-static struct ctl_table hv_root_table[] = {
+-	{
+-		.procname	= "kernel",
+-		.mode		= 0555,
+-		.child		= hv_ctl_table
+-	},
+-	{}
+-};
+-
+ /*
+  * vmbus_bus_init -Main vmbus driver initialization routine.
+  *
+@@ -1534,38 +1379,6 @@ static int vmbus_bus_init(void)
+ 	if (ret)
+ 		goto err_connect;
+ 
+-	if (hv_is_isolation_supported())
+-		sysctl_record_panic_msg = 0;
+-
+-	/*
+-	 * Only register if the crash MSRs are available
+-	 */
+-	if (ms_hyperv.misc_features & HV_FEATURE_GUEST_CRASH_MSR_AVAILABLE) {
+-		u64 hyperv_crash_ctl;
+-		/*
+-		 * Panic message recording (sysctl_record_panic_msg)
+-		 * is enabled by default in non-isolated guests and
+-		 * disabled by default in isolated guests; the panic
+-		 * message recording won't be available in isolated
+-		 * guests should the following registration fail.
+-		 */
+-		hv_ctl_table_hdr = register_sysctl_table(hv_root_table);
+-		if (!hv_ctl_table_hdr)
+-			pr_err("Hyper-V: sysctl table register error");
+-
+-		/*
+-		 * Register for panic kmsg callback only if the right
+-		 * capability is supported by the hypervisor.
+-		 */
+-		hyperv_crash_ctl = hv_get_register(HV_REGISTER_CRASH_CTL);
+-		if (hyperv_crash_ctl & HV_CRASH_CTL_CRASH_NOTIFY_MSG)
+-			hv_kmsg_dump_register();
+-
+-		register_die_notifier(&hyperv_die_report_block);
+-		atomic_notifier_chain_register(&panic_notifier_list,
+-						&hyperv_panic_report_block);
+-	}
+-
+ 	/*
+ 	 * Always register the vmbus unload panic notifier because we
+ 	 * need to shut the VMbus channel connection on panic.
+@@ -1590,8 +1403,6 @@ static int vmbus_bus_init(void)
+ 	}
+ err_setup:
+ 	bus_unregister(&hv_bus);
+-	unregister_sysctl_table(hv_ctl_table_hdr);
+-	hv_ctl_table_hdr = NULL;
+ 	return ret;
+ }
+ 
+@@ -2887,13 +2698,6 @@ static void __exit vmbus_exit(void)
+ 	vmbus_free_channels();
+ 	kfree(vmbus_connection.channels);
+ 
+-	if (ms_hyperv.misc_features & HV_FEATURE_GUEST_CRASH_MSR_AVAILABLE) {
+-		kmsg_dump_unregister(&hv_kmsg_dumper);
+-		unregister_die_notifier(&hyperv_die_report_block);
+-		atomic_notifier_chain_unregister(&panic_notifier_list,
+-						&hyperv_panic_report_block);
+-	}
+-
+ 	/*
+ 	 * The vmbus panic notifier is always registered, hence we should
+ 	 * also unconditionally unregister it here as well.
+@@ -2901,9 +2705,6 @@ static void __exit vmbus_exit(void)
+ 	atomic_notifier_chain_unregister(&panic_notifier_list,
+ 					&hyperv_panic_vmbus_unload_block);
+ 
+-	free_page((unsigned long)hv_panic_page);
+-	unregister_sysctl_table(hv_ctl_table_hdr);
+-	hv_ctl_table_hdr = NULL;
+ 	bus_unregister(&hv_bus);
+ 
+ 	cpuhp_remove_state(hyperv_cpuhp_online);
+
+From a494aef23dfc732945cb42e22246a5c31174e4a5 Mon Sep 17 00:00:00 2001
+From: Dexuan Cui <decui@microsoft.com>
+Date: Thu, 20 Apr 2023 18:30:25 -0700
+Subject: [PATCH 22/22] PCI: hv: Replace retarget_msi_interrupt_params with
+ hyperv_pcpu_input_arg
+
+4 commits are involved here:
+A (2016): commit 0de8ce3ee8e3 ("PCI: hv: Allocate physically contiguous hypercall params buffer")
+B (2017): commit be66b6736591 ("PCI: hv: Use page allocation for hbus structure")
+C (2019): commit 877b911a5ba0 ("PCI: hv: Avoid a kmemleak false positive caused by the hbus buffer")
+D (2018): commit 68bb7bfb7985 ("X86/Hyper-V: Enable IPI enlightenments")
+
+Patch D introduced the per-CPU hypercall input page "hyperv_pcpu_input_arg"
+in 2018. With patch D, we no longer need the per-Hyper-V-PCI-bus hypercall
+input page "hbus->retarget_msi_interrupt_params" that was added in patch A,
+and the issue addressed by patch B is no longer an issue, and we can also
+get rid of patch C.
+
+The change here is required for PCI device assignment to work for
+Confidential VMs (CVMs) running without a paravisor, because otherwise we
+would have to call set_memory_decrypted() for
+"hbus->retarget_msi_interrupt_params" before calling the hypercall
+HVCALL_RETARGET_INTERRUPT.
+
+Signed-off-by: Dexuan Cui <decui@microsoft.com>
+Reviewed-by: Michael Kelley <mikelley@microsoft.com>
+Acked-by: Lorenzo Pieralisi <lpieralisi@kernel.org>
+Link: https://lore.kernel.org/r/20230421013025.17152-1-decui@microsoft.com
+Signed-off-by: Wei Liu <wei.liu@kernel.org>
+---
+ drivers/pci/controller/pci-hyperv.c | 48 +++++------------------------
+ 1 file changed, 7 insertions(+), 41 deletions(-)
+
+diff --git a/drivers/pci/controller/pci-hyperv.c b/drivers/pci/controller/pci-hyperv.c
+index 337f3b4a04fc09..bc32662c6bb7fd 100644
+--- a/drivers/pci/controller/pci-hyperv.c
++++ b/drivers/pci/controller/pci-hyperv.c
+@@ -508,20 +508,11 @@ struct hv_pcibus_device {
+ 	struct msi_domain_info msi_info;
+ 	struct irq_domain *irq_domain;
+ 
+-	spinlock_t retarget_msi_interrupt_lock;
+-
+ 	struct workqueue_struct *wq;
+ 
+ 	/* Highest slot of child device with resources allocated */
+ 	int wslot_res_allocated;
+ 	bool use_calls; /* Use hypercalls to access mmio cfg space */
+-
+-	/* hypercall arg, must not cross page boundary */
+-	struct hv_retarget_device_interrupt retarget_msi_interrupt_params;
+-
+-	/*
+-	 * Don't put anything here: retarget_msi_interrupt_params must be last
+-	 */
+ };
+ 
+ /*
+@@ -645,9 +636,9 @@ static void hv_arch_irq_unmask(struct irq_data *data)
+ 	hbus = container_of(pbus->sysdata, struct hv_pcibus_device, sysdata);
+ 	int_desc = data->chip_data;
+ 
+-	spin_lock_irqsave(&hbus->retarget_msi_interrupt_lock, flags);
++	local_irq_save(flags);
+ 
+-	params = &hbus->retarget_msi_interrupt_params;
++	params = *this_cpu_ptr(hyperv_pcpu_input_arg);
+ 	memset(params, 0, sizeof(*params));
+ 	params->partition_id = HV_PARTITION_ID_SELF;
+ 	params->int_entry.source = HV_INTERRUPT_SOURCE_MSI;
+@@ -680,7 +671,7 @@ static void hv_arch_irq_unmask(struct irq_data *data)
+ 
+ 		if (!alloc_cpumask_var(&tmp, GFP_ATOMIC)) {
+ 			res = 1;
+-			goto exit_unlock;
++			goto out;
+ 		}
+ 
+ 		cpumask_and(tmp, dest, cpu_online_mask);
+@@ -689,7 +680,7 @@ static void hv_arch_irq_unmask(struct irq_data *data)
+ 
+ 		if (nr_bank <= 0) {
+ 			res = 1;
+-			goto exit_unlock;
++			goto out;
+ 		}
+ 
+ 		/*
+@@ -708,8 +699,8 @@ static void hv_arch_irq_unmask(struct irq_data *data)
+ 	res = hv_do_hypercall(HVCALL_RETARGET_INTERRUPT | (var_size << 17),
+ 			      params, NULL);
+ 
+-exit_unlock:
+-	spin_unlock_irqrestore(&hbus->retarget_msi_interrupt_lock, flags);
++out:
++	local_irq_restore(flags);
+ 
+ 	/*
+ 	 * During hibernation, when a CPU is offlined, the kernel tries
+@@ -3598,35 +3589,11 @@ static int hv_pci_probe(struct hv_device *hdev,
+ 	bool enter_d0_retry = true;
+ 	int ret;
+ 
+-	/*
+-	 * hv_pcibus_device contains the hypercall arguments for retargeting in
+-	 * hv_irq_unmask(). Those must not cross a page boundary.
+-	 */
+-	BUILD_BUG_ON(sizeof(*hbus) > HV_HYP_PAGE_SIZE);
+-
+ 	bridge = devm_pci_alloc_host_bridge(&hdev->device, 0);
+ 	if (!bridge)
+ 		return -ENOMEM;
+ 
+-	/*
+-	 * With the recent 59bb47985c1d ("mm, sl[aou]b: guarantee natural
+-	 * alignment for kmalloc(power-of-two)"), kzalloc() is able to allocate
+-	 * a 4KB buffer that is guaranteed to be 4KB-aligned. Here the size and
+-	 * alignment of hbus is important because hbus's field
+-	 * retarget_msi_interrupt_params must not cross a 4KB page boundary.
+-	 *
+-	 * Here we prefer kzalloc to get_zeroed_page(), because a buffer
+-	 * allocated by the latter is not tracked and scanned by kmemleak, and
+-	 * hence kmemleak reports the pointer contained in the hbus buffer
+-	 * (i.e. the hpdev struct, which is created in new_pcichild_device() and
+-	 * is tracked by hbus->children) as memory leak (false positive).
+-	 *
+-	 * If the kernel doesn't have 59bb47985c1d, get_zeroed_page() *must* be
+-	 * used to allocate the hbus buffer and we can avoid the kmemleak false
+-	 * positive by using kmemleak_alloc() and kmemleak_free() to ask
+-	 * kmemleak to track and scan the hbus buffer.
+-	 */
+-	hbus = kzalloc(HV_HYP_PAGE_SIZE, GFP_KERNEL);
++	hbus = kzalloc(sizeof(*hbus), GFP_KERNEL);
+ 	if (!hbus)
+ 		return -ENOMEM;
+ 
+@@ -3683,7 +3650,6 @@ static int hv_pci_probe(struct hv_device *hdev,
+ 	INIT_LIST_HEAD(&hbus->dr_list);
+ 	spin_lock_init(&hbus->config_lock);
+ 	spin_lock_init(&hbus->device_list_lock);
+-	spin_lock_init(&hbus->retarget_msi_interrupt_lock);
+ 	hbus->wq = alloc_ordered_workqueue("hv_pci_%x", 0,
+ 					   hbus->bridge->domain_nr);
+ 	if (!hbus->wq) {

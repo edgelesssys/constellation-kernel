@@ -1028,6 +1028,8 @@ Source4002: gating.yaml
 Patch1: patch-%{patchversion}-redhat.patch
 
 Patch2: pat_without_mtrr.patch
+
+Patch3: hyperv-pci-passthru-combined.patch
 %endif
 
 # empty final patch to facilitate testing of kernel patches
@@ -1768,6 +1770,8 @@ ApplyOptionalPatch patch-%{patchversion}-redhat.patch
 %endif
 
 ApplyOptionalPatch pat_without_mtrr.patch
+
+ApplyOptionalPatch hyperv-pci-passthru-combined.patch
 
 ApplyOptionalPatch linux-kernel-test.patch
 
