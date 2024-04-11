@@ -847,7 +847,7 @@ BuildRequires: tpm2-tools
 # exact git commit you can run
 #
 # xzcat -qq ${TARBALL} | git get-tar-commit-id
-Source0: https://cdn.confidential.cloud/constellation/kernel/6.2.0-100.constellation/linux-azure-6.2_6.2.0.tar.gz
+Source0: https://cdn.confidential.cloud/constellation/kernel/6.2.0-100.constellation/linux-6.2.0-1018-azure.tar.gz
 
 Source1: Makefile.rhelver
 
