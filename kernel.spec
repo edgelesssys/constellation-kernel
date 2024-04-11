@@ -179,7 +179,9 @@ Summary: The Linux kernel
 %define kversion 6
 %define tarfile_release 6.2.0
 # This is needed to do merge window version magic
-%define patchlevel 1
+%define patchlevel 2
+# This is needed for ubuntu kernel sources that ship with broken sublevel
+%define sublevel 0
 # This allows pkg_release to have configurable %%{?dist} tag
 %define specrelease 100%{?buildid}%{?dist}
 # This defines the kabi tarball version
@@ -1956,6 +1958,8 @@ InitBuildVars() {
     # if pre-rc1 devel kernel, must fix up PATCHLEVEL for our versioning scheme
     # if we are post rc1 this should match anyway so this won't matter
     perl -p -i -e 's/^PATCHLEVEL.*/PATCHLEVEL = %{patchlevel}/' Makefile
+
+    perl -p -i -e 's/^SUBLEVEL.*/SUBLEVEL = %{sublevel}/' Makefile
 
     %{make} %{?_smp_mflags} mrproper
     cp configs/$Config .config
