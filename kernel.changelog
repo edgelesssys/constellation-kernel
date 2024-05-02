@@ -1,3 +1,12 @@
+* Thu May 02 2024 Augusto Caringi <acaringi@redhat.com> [6.8.9-0]
+- redhat/configs: Enable CONFIG_CPU_MITIGATIONS (Augusto Caringi)
+- Turn on CONFIG_RANDOM_KMALLOC_CACHES for Fedora (Justin M. Forbes)
+- drm/nouveau/dp: Don't probe eDP ports twice harder (Lyude Paul)
+- drm/nouveau/kms/nv50-: Disable AUX bus for disconnected DP ports (Lyude Paul)
+- drm/dp: Don't attempt AUX transfers when eDP panels are not powered (Douglas Anderson)
+- Linux v6.8.9
+Resolves: 
+
 * Sat Apr 27 2024 Justin M. Forbes <jforbes@fedoraproject.org> [6.8.8-0]
 - Update BugsFixed for 6.8.8 (Justin M. Forbes)
 - Turn on ISM for Fedora (Justin M. Forbes)

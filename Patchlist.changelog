@@ -1,3 +1,12 @@
+"https://gitlab.com/cki-project/kernel-ark/-/commit"/21b019ce62997d78fe5e42f4a04b64cd9d9b11b8
+ 21b019ce62997d78fe5e42f4a04b64cd9d9b11b8 drm/nouveau/dp: Don't probe eDP ports twice harder
+
+"https://gitlab.com/cki-project/kernel-ark/-/commit"/fb6f1f07d22bc6bac44c87e7623cf252e8c57473
+ fb6f1f07d22bc6bac44c87e7623cf252e8c57473 drm/nouveau/kms/nv50-: Disable AUX bus for disconnected DP ports
+
+"https://gitlab.com/cki-project/kernel-ark/-/commit"/5122018da124756713dfe49cad50a7653ade7bf0
+ 5122018da124756713dfe49cad50a7653ade7bf0 drm/dp: Don't attempt AUX transfers when eDP panels are not powered
+
 "https://gitlab.com/cki-project/kernel-ark/-/commit"/e56840b5f971b4d0f4032f6f5ab95c0c5ba40f8e
  e56840b5f971b4d0f4032f6f5ab95c0c5ba40f8e nouveau: fix devinit paths to only handle display on GSP.
 

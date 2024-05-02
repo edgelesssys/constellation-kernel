@@ -160,18 +160,18 @@ Summary: The Linux kernel
 #  the --with-release option overrides this setting.)
 %define debugbuildsenabled 1
 # define buildid .local
-%define specrpmversion 6.8.8
-%define specversion 6.8.8
+%define specrpmversion 6.8.9
+%define specversion 6.8.9
 %define patchversion 6.8
 %define pkgrelease 300
 %define kversion 6
-%define tarfile_release 6.8.8
+%define tarfile_release 6.8.9
 # This is needed to do merge window version magic
 %define patchlevel 8
 # This allows pkg_release to have configurable %%{?dist} tag
 %define specrelease 300%{?buildid}%{?dist}
 # This defines the kabi tarball version
-%define kabiversion 6.8.8
+%define kabiversion 6.8.9
 
 # If this variable is set to 1, a bpf selftests build failure will cause a
 # fatal kernel package build error
@@ -3959,6 +3959,14 @@ fi\
 #
 #
 %changelog
+* Thu May 02 2024 Augusto Caringi <acaringi@redhat.com> [6.8.9-0]
+- redhat/configs: Enable CONFIG_CPU_MITIGATIONS (Augusto Caringi)
+- Turn on CONFIG_RANDOM_KMALLOC_CACHES for Fedora (Justin M. Forbes)
+- drm/nouveau/dp: Don't probe eDP ports twice harder (Lyude Paul)
+- drm/nouveau/kms/nv50-: Disable AUX bus for disconnected DP ports (Lyude Paul)
+- drm/dp: Don't attempt AUX transfers when eDP panels are not powered (Douglas Anderson)
+- Linux v6.8.9
+
 * Sat Apr 27 2024 Justin M. Forbes <jforbes@fedoraproject.org> [6.8.8-0]
 - Update BugsFixed for 6.8.8 (Justin M. Forbes)
 - Turn on ISM for Fedora (Justin M. Forbes)
