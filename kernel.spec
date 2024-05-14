@@ -864,17 +864,7 @@ Source21: mod-sign.sh
 %if 0%{?include_rhel}
 Source23: x509.genkey.rhel
 
-Source24: %{name}-aarch64-rhel.config
-Source25: %{name}-aarch64-debug-rhel.config
 Source26: mod-extra.list.rhel
-
-Source27: %{name}-ppc64le-rhel.config
-Source28: %{name}-ppc64le-debug-rhel.config
-Source29: %{name}-s390x-rhel.config
-Source30: %{name}-s390x-debug-rhel.config
-Source31: %{name}-s390x-zfcpdump-rhel.config
-Source32: %{name}-x86_64-rhel.config
-Source33: %{name}-x86_64-debug-rhel.config
 
 Source34: filter-x86_64.sh.rhel
 Source35: filter-aarch64.sh.rhel
@@ -883,9 +873,6 @@ Source37: filter-s390x.sh.rhel
 Source38: filter-modules.sh.rhel
 
 Source41: x509.genkey.centos
-# ARM64 64K page-size kernel config
-Source42: %{name}-aarch64-64k-rhel.config
-Source43: %{name}-aarch64-64k-debug-rhel.config
 
 %endif
 
@@ -893,14 +880,6 @@ Source43: %{name}-aarch64-64k-debug-rhel.config
 Source50: x509.genkey.fedora
 Source51: mod-extra.list.fedora
 
-Source52: %{name}-aarch64-fedora.config
-Source53: %{name}-aarch64-debug-fedora.config
-Source54: %{name}-aarch64-16k-fedora.config
-Source55: %{name}-aarch64-16k-debug-fedora.config
-Source56: %{name}-ppc64le-fedora.config
-Source57: %{name}-ppc64le-debug-fedora.config
-Source58: %{name}-s390x-fedora.config
-Source59: %{name}-s390x-debug-fedora.config
 Source60: %{name}-x86_64-fedora.config
 Source61: %{name}-x86_64-debug-fedora.config
 
@@ -945,19 +924,8 @@ Source211: Module.kabi_dup_ppc64le
 Source212: Module.kabi_dup_s390x
 Source213: Module.kabi_dup_x86_64
 
-Source300: kernel-abi-stablelists-%{kabiversion}.tar.xz
-Source301: kernel-kabi-dw-%{kabiversion}.tar.xz
-
 # RT specific virt module
 Source400: mod-kvm.list
-
-%if %{include_rt}
-# realtime config files
-Source474: %{name}-aarch64-rt-rhel.config
-Source475: %{name}-aarch64-rt-debug-rhel.config
-Source476: %{name}-x86_64-rt-rhel.config
-Source477: %{name}-x86_64-rt-debug-rhel.config
-%endif
 
 # Sources for kernel-tools
 Source2002: kvm_stat.logrotate
@@ -971,7 +939,7 @@ Source3001: kernel-local
 Source3002: Patchlist.changelog
 %endif
 
-Source4000: README.rst
+Source4000: README.md
 Source4001: rpminspect.yaml
 Source4002: gating.yaml
 
