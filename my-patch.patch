@@ -1,0 +1,36 @@
+From f363450cea4af4e429efdd5f0577957f099464f0 Mon Sep 17 00:00:00 2001
+From: Tom Dohrmann <erbse.13@gmx.de>
+Date: Thu, 18 Jul 2024 11:54:35 +0200
+Subject: [PATCH] WIP
+
+---
+ arch/x86/kernel/sev.c | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/arch/x86/kernel/sev.c b/arch/x86/kernel/sev.c
+index 6395bfd87b68..7056632c12bd 100644
+--- a/arch/x86/kernel/sev.c
++++ b/arch/x86/kernel/sev.c
+@@ -2137aj,14 +2137,16 @@ static int __init report_cpuid_table(void)
+ {
+ 	const struct snp_cpuid_table *cpuid_table = snp_cpuid_get_table();
+adlfjals 
+-	if (!cpuid_table->count)
++	if (!cpuid_table->count) {
++		pr_info("Not using SNP CPUID table.\n");
+ 		return 0;
++	}
+ 
+ 	pr_info("Using SNP CPUID table, %d entries present.\n",
+ 		cpuid_table->count);
+ 
+-	if (sev_cfg.debug)
+-		dump_cpuid_table();
++	// if (sev_cfg.debug)
++	dump_cpuid_table();
+ 
+ 	return 0;
+ }
+-- 
+2.45.1
+
