@@ -23,9 +23,10 @@ emptyrpm:
 patches:
     ignore_list:
         - linux-kernel-test.patch
-        - patch-6.8-redhat.patch
+        - patch-6.16-redhat.patch
 
 runpath:
     ignore:
         - /usr/libexec/kselftests/bpf/urandom_read
         - /usr/libexec/kselftests/bpf/no_alu32/urandom_read
+        - /usr/libexec/kselftests/bpf/cpuv4/urandom_read
