@@ -2850,10 +2850,6 @@ chmod +x tools/power/cpupower/utils/version-gen.sh
    %{log_msg "build intel-speed-select"}
    %{tools_make}
    popd
-   pushd tools/arch/x86/intel_sdsi
-   %{log_msg "build intel_sdsi"}
-   %{tools_make} CFLAGS="${RPM_OPT_FLAGS}"
-   popd
 %endif
 %endif
 pushd tools/thermal/tmon/
@@ -3155,9 +3151,6 @@ chmod 0755 %{buildroot}%{_libdir}/libcpupower.so*
    popd
    pushd tools/power/x86/intel-speed-select
    %{tools_make} DESTDIR=%{buildroot} install
-   popd
-   pushd tools/arch/x86/intel_sdsi
-   %{tools_make} CFLAGS="${RPM_OPT_FLAGS}" DESTDIR=%{buildroot} install
    popd
 %endif
 pushd tools/thermal/tmon
@@ -3669,7 +3662,6 @@ fi\
 %{_bindir}/turbostat
 %{_mandir}/man8/turbostat*
 %{_bindir}/intel-speed-select
-%{_sbindir}/intel_sdsi
 %endif
 # cpupowerarchs
 %endif
